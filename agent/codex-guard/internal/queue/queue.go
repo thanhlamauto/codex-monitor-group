@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/atomicfile"
 )
 
 type Item struct {
@@ -51,7 +53,7 @@ func (q *Queue) save(items []Item) error {
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, q.path)
+	return atomicfile.Replace(tmp, q.path)
 }
 
 func (q *Queue) Push(item Item) error {

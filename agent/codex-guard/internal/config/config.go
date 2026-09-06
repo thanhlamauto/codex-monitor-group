@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/atomicfile"
 )
 
 type Config struct {
@@ -97,13 +99,17 @@ func Save(path string, c *Config) error {
 	disk := *c
 	if secureSecretStorage() {
 		var err error
-		disk.ProtectedPrivateKey, err = protectSecret(c.PrivateKey)
-		if err != nil {
-			return fmt.Errorf("protect device private key: %w", err)
+		if c.PrivateKey != "" {
+			disk.ProtectedPrivateKey, err = protectSecret(c.PrivateKey)
+			if err != nil {
+				return fmt.Errorf("protect device private key: %w", err)
+			}
 		}
-		disk.ProtectedOTLPToken, err = protectSecret(c.OTLPToken)
-		if err != nil {
-			return fmt.Errorf("protect OTel token: %w", err)
+		if c.OTLPToken != "" {
+			disk.ProtectedOTLPToken, err = protectSecret(c.OTLPToken)
+			if err != nil {
+				return fmt.Errorf("protect OTel token: %w", err)
+			}
 		}
 		disk.PrivateKey = ""
 		disk.OTLPToken = ""
@@ -126,5 +132,5 @@ func Save(path string, c *Config) error {
 	if err := os.Chmod(tmp, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return atomicfile.Replace(tmp, path)
 }

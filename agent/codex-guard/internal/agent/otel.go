@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/atomicfile"
 )
 
 type otelStore struct {
@@ -94,7 +96,7 @@ func saveOTelStore(path string, store otelStore) error {
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return atomicfile.Replace(tmp, path)
 }
 
 func (a *Client) ingestOTLP(data []byte) (int, error) {

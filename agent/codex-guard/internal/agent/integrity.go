@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/atomicfile"
 	"github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/protocol"
 )
 
@@ -108,7 +109,7 @@ func saveIntegrityState(path string, state integrityState) error {
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return atomicfile.Replace(tmp, path)
 }
 
 func discoverLogs(codexHome string) (map[string]string, map[string]bool, error) {

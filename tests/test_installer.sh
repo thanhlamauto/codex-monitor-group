@@ -22,8 +22,8 @@ grep -q 'Get-FileHash -Algorithm SHA256' "$ROOT/installer/install.ps1"
 grep -q 'build_agent windows amd64' "$ROOT/scripts/build-release.sh"
 grep -q 'fetch_one windows-amd64' "$ROOT/scripts/fetch-ccusage.sh"
 if command -v pwsh >/dev/null 2>&1; then
-  pwsh -NoProfile -NonInteractive -Command '$errors=$null; [System.Management.Automation.Language.Parser]::ParseFile($args[0],[ref]$null,[ref]$errors) > $null; if ($errors.Count) { $errors | Out-String | Write-Error; exit 1 }' "$ROOT/installer/install.ps1"
-  pwsh -NoProfile -NonInteractive -Command '$errors=$null; [System.Management.Automation.Language.Parser]::ParseFile($args[0],[ref]$null,[ref]$errors) > $null; if ($errors.Count) { $errors | Out-String | Write-Error; exit 1 }' "$ROOT/installer/uninstall.ps1"
+  PS_SCRIPT_PATH="$ROOT/installer/install.ps1" pwsh -NoProfile -NonInteractive -Command '$errors=$null; [System.Management.Automation.Language.Parser]::ParseFile($env:PS_SCRIPT_PATH,[ref]$null,[ref]$errors) > $null; if ($errors.Count) { $errors | Out-String | Write-Error; exit 1 }'
+  PS_SCRIPT_PATH="$ROOT/installer/uninstall.ps1" pwsh -NoProfile -NonInteractive -Command '$errors=$null; [System.Management.Automation.Language.Parser]::ParseFile($env:PS_SCRIPT_PATH,[ref]$null,[ref]$errors) > $null; if ($errors.Count) { $errors | Out-String | Write-Error; exit 1 }'
 fi
 if grep -R -n 'npx ccusage@latest' "$ROOT" --exclude=README.md --exclude=test_installer.sh; then
   echo "unpinned ccusage invocation found" >&2
