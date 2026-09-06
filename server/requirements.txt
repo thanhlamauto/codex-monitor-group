@@ -1,6 +1,7 @@
 fastapi==0.116.1
 uvicorn[standard]==0.35.0
-SQLAlchemy==2.0.43
+SQLAlchemy==2.0.52
+sqlalchemy-cockroachdb==2.0.4
 psycopg[binary]==3.2.9
 Jinja2==3.1.6
 cryptography==45.0.6

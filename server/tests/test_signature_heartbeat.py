@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from app.models import Device, QuotaSnapshot, SecurityEvent
+from app.models import Device, ProcessedEvent, QuotaSnapshot, SecurityEvent
 from app.services import device_state
 
 from .helpers import enroll, heartbeat_payload, signed
@@ -81,3 +81,4 @@ def test_invalid_quota_is_rejected(client, db):
     response = client.post("/api/v1/heartbeat", json=signed(key, result["device_id"], 1, heartbeat_payload(quota=quota)))
     assert response.status_code == 422
     assert db.get(QuotaSnapshot, result["device_id"]) is None
+    assert db.query(ProcessedEvent).count() == 0

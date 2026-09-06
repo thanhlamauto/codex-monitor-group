@@ -16,13 +16,14 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .config import settings
 from .db import SessionLocal, ensure_schema, get_db
-from .models import Device, Heartbeat, IntegritySnapshot, QuotaSnapshot, SecurityEvent, Student, UsageReport, utcnow
+from .models import Device, Heartbeat, IntegritySnapshot, ProcessedEvent, QuotaSnapshot, SecurityEvent, Student, UsageReport, utcnow
 from .schemas import EnrollRequest, IntegrityPayload, QuotaPayload, SignedEnvelope, UsagePayload
 from .security import canonical_payload, hash_secret, parse_client_timestamp, signature_message, verify_signature
-from .services import add_security_event, artifact_hashes, classroom_today, device_state, maybe_usage_mismatch, reconcile_unreachable, usage_totals
+from .services import add_security_event, artifact_hashes, classroom_today, device_state, maybe_usage_mismatch, purge_expired_telemetry, reconcile_unreachable, usage_totals
 
 
 BASE_DIR = Path(__file__).parent
@@ -113,7 +114,7 @@ async def lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(title="Codex Classroom Monitor", version="1.3.2", lifespan=lifespan)
+app = FastAPI(title="Codex Classroom Monitor", version="1.4.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
@@ -154,8 +155,9 @@ def cron_reconcile(request: Request, db: Session = Depends(get_db)):
     if not settings.cron_secret or not secrets.compare_digest(supplied, expected):
         raise HTTPException(401, "invalid cron credential")
     reconcile_unreachable(db)
+    deleted = purge_expired_telemetry(db)
     db.commit()
-    return {"status": "ok", "reconciled_at": utcnow().isoformat()}
+    return {"status": "ok", "reconciled_at": utcnow().isoformat(), "deleted": deleted}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -239,11 +241,13 @@ def enroll(body: EnrollRequest, db: Session = Depends(get_db)):
     device = Device(student_id=student.id, label=body.device_label, public_key=body.public_key, otlp_token_hash=hash_secret(otlp_token))
     db.add(device)
     db.commit()
-    return {"device_id": device.id, "student_name": student.name, "device_label": device.label, "otlp_token": otlp_token, "heartbeat_seconds": 60, "classroom_timezone": settings.classroom_timezone, "server_time": utcnow().isoformat()}
+    return {"device_id": device.id, "student_name": student.name, "device_label": device.label, "otlp_token": otlp_token, "heartbeat_seconds": 60, "usage_seconds": 300, "integrity_seconds": 300, "classroom_timezone": settings.classroom_timezone, "server_time": utcnow().isoformat()}
 
 
-def verified(envelope: SignedEnvelope, db: Session) -> tuple[Device, bool]:
-    device = db.get(Device, envelope.device_id)
+def verified(envelope: SignedEnvelope, db: Session, event_kind: str) -> tuple[Device, bool]:
+    # Serialize sequence advancement for a device. This prevents two concurrent
+    # functions from accepting out-of-order sequence numbers.
+    device = db.scalar(select(Device).where(Device.id == envelope.device_id).with_for_update())
     if not device:
         raise HTTPException(401, "unknown device")
     message = signature_message(envelope.device_id, envelope.sequence, envelope.timestamp, envelope.event_id, envelope.payload)
@@ -251,32 +255,35 @@ def verified(envelope: SignedEnvelope, db: Session) -> tuple[Device, bool]:
         add_security_event(db, device, "INVALID_SIGNATURE", f"invalid-signature:{envelope.event_id}", {"event_id": envelope.event_id})
         db.commit()
         raise HTTPException(401, "invalid signature")
-    duplicate = any([
-        db.scalar(select(Heartbeat.id).where(Heartbeat.device_id == device.id, Heartbeat.event_id == envelope.event_id)),
-        db.scalar(select(UsageReport.id).where(UsageReport.device_id == device.id, UsageReport.event_id.like(f"{envelope.event_id}%"))),
-        db.scalar(select(IntegritySnapshot.id).where(IntegritySnapshot.device_id == device.id, IntegritySnapshot.event_id == envelope.event_id)),
-        db.scalar(select(SecurityEvent.id).where(SecurityEvent.device_id == device.id, SecurityEvent.event_key == f"agent-event:{envelope.event_id}")),
-    ])
-    if duplicate:
+    if db.get(ProcessedEvent, (device.id, envelope.event_id)):
         return device, True
     if envelope.sequence <= device.last_sequence:
         add_security_event(db, device, "REPLAY_ATTEMPT", f"replay:{envelope.event_id}", {"sequence": envelope.sequence, "last_sequence": device.last_sequence})
         db.commit()
         raise HTTPException(409, "replayed sequence")
+    db.add(ProcessedEvent(device_id=device.id, event_id=envelope.event_id, event_kind=event_kind))
+    try:
+        db.flush()
+    except IntegrityError:
+        # A concurrent retry won the unique receipt. Its domain changes are in
+        # the same transaction, so treating this request as duplicate is safe.
+        db.rollback()
+        return device, True
     device.last_sequence = envelope.sequence
     return device, False
 
 
 @app.post("/api/v1/heartbeat")
 def heartbeat(envelope: SignedEnvelope, db: Session = Depends(get_db)):
-    device, duplicate = verified(envelope, db)
+    device, duplicate = verified(envelope, db, "heartbeat")
     if duplicate:
         return {"accepted": True, "duplicate": True}
     p = envelope.payload
     required = ("agent_version", "agent_sha256", "ccusage_version", "ccusage_sha256", "codex_home", "uptime_seconds")
     if any(k not in p for k in required):
         raise HTTPException(422, "missing heartbeat field")
-    device.last_seen = utcnow()
+    observed_now = utcnow()
+    device.last_seen = observed_now
     device.agent_version = str(p["agent_version"])[:64]
     device.agent_sha256 = str(p["agent_sha256"])[:64].lower()
     device.ccusage_version = str(p["ccusage_version"])[:64]
@@ -316,14 +323,20 @@ def heartbeat(envelope: SignedEnvelope, db: Session = Depends(get_db)):
         add_security_event(db, device, "CCUSAGE_BINARY_MODIFIED", f"ccusage-hash:{device.ccusage_sha256}", {"version": device.ccusage_version})
     if device.ccusage_version != settings.ccusage_version:
         add_security_event(db, device, "CCUSAGE_BINARY_MODIFIED", f"ccusage-version:{device.ccusage_version}", {"expected_version": settings.ccusage_version})
-    db.add(Heartbeat(device_id=device.id, event_id=envelope.event_id, sequence=envelope.sequence, client_timestamp=parse_client_timestamp(envelope.timestamp), uptime_seconds=max(0, int(p["uptime_seconds"]))))
+    last_recorded = device.last_heartbeat_recorded_at
+    if last_recorded and last_recorded.tzinfo is None:
+        last_recorded = last_recorded.replace(tzinfo=timezone.utc)
+    history_recorded = last_recorded is None or (observed_now - last_recorded).total_seconds() >= settings.heartbeat_history_seconds
+    if history_recorded:
+        device.last_heartbeat_recorded_at = observed_now
+        db.add(Heartbeat(device_id=device.id, event_id=envelope.event_id, sequence=envelope.sequence, client_timestamp=parse_client_timestamp(envelope.timestamp), uptime_seconds=max(0, int(p["uptime_seconds"]))))
     db.commit()
-    return {"accepted": True, "duplicate": False, "server_time": utcnow().isoformat()}
+    return {"accepted": True, "duplicate": False, "history_recorded": history_recorded, "server_time": utcnow().isoformat()}
 
 
 @app.post("/api/v1/usage")
 def usage(envelope: SignedEnvelope, db: Session = Depends(get_db)):
-    device, duplicate = verified(envelope, db)
+    device, duplicate = verified(envelope, db, "usage")
     if duplicate:
         return {"accepted": True, "duplicate": True}
     try:
@@ -360,7 +373,7 @@ def usage(envelope: SignedEnvelope, db: Session = Depends(get_db)):
 
 @app.post("/api/v1/integrity")
 def integrity(envelope: SignedEnvelope, db: Session = Depends(get_db)):
-    device, duplicate = verified(envelope, db)
+    device, duplicate = verified(envelope, db, "integrity")
     if duplicate:
         return {"accepted": True, "duplicate": True}
     try:
@@ -433,7 +446,7 @@ def integrity(envelope: SignedEnvelope, db: Session = Depends(get_db)):
 
 @app.post("/api/v1/events")
 def events(envelope: SignedEnvelope, db: Session = Depends(get_db)):
-    device, duplicate = verified(envelope, db)
+    device, duplicate = verified(envelope, db, "security")
     if duplicate:
         return {"accepted": True, "duplicate": True}
     kind = str(envelope.payload.get("event_type", ""))

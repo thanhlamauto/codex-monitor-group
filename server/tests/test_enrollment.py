@@ -17,6 +17,9 @@ def test_public_registration_creates_student_and_device(client, db):
     assert response.json()["device_label"] == "An MacBook"
     assert response.json()["device_id"]
     assert response.json()["otlp_token"]
+    assert response.json()["heartbeat_seconds"] == 60
+    assert response.json()["usage_seconds"] == 300
+    assert response.json()["integrity_seconds"] == 300
     assert db.query(Student).count() == 1
     assert db.query(Device).count() == 1
 

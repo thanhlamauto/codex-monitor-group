@@ -35,6 +35,7 @@ class Device(Base):
     otlp_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     enrolled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    last_heartbeat_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_sequence: Mapped[int] = mapped_column(BigInteger, default=0)
     agent_version: Mapped[str | None] = mapped_column(String(64))
     agent_sha256: Mapped[str | None] = mapped_column(String(64))
@@ -87,7 +88,7 @@ class IntegritySnapshot(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"), nullable=False, index=True)
     event_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     files_checked: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(32), default="OK")
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -115,5 +116,15 @@ class Heartbeat(Base):
     event_id: Mapped[str] = mapped_column(String(128), nullable=False)
     sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
     client_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     uptime_seconds: Mapped[int] = mapped_column(BigInteger, default=0)
+
+
+class ProcessedEvent(Base):
+    """Short-lived idempotency receipt shared by every signed ingest route."""
+
+    __tablename__ = "processed_events"
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"), primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    event_kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

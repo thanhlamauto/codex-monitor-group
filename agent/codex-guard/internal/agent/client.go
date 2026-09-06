@@ -23,7 +23,7 @@ import (
 	queuepkg "github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/queue"
 )
 
-const Version = "1.3.2"
+const Version = "1.4.0"
 
 type Client struct {
 	ConfigPath string
@@ -48,6 +48,8 @@ type EnrollResponse struct {
 	DeviceLabel       string `json:"device_label"`
 	OTLPToken         string `json:"otlp_token"`
 	HeartbeatSeconds  int    `json:"heartbeat_seconds"`
+	UsageSeconds      int    `json:"usage_seconds"`
+	IntegritySeconds  int    `json:"integrity_seconds"`
 	ClassroomTimezone string `json:"classroom_timezone"`
 }
 
@@ -106,7 +108,7 @@ func Enroll(server, name, label, codexHome, codexPath, ccusagePath, agentPath, s
 	if err := json.Unmarshal(data, &enrolled); err != nil {
 		return nil, err
 	}
-	c := &config.Config{ServerURL: strings.TrimRight(server, "/"), DeviceID: enrolled.DeviceID, StudentName: enrolled.StudentName, DeviceLabel: enrolled.DeviceLabel, PrivateKey: base64.StdEncoding.EncodeToString(private), PublicKey: base64.StdEncoding.EncodeToString(public), OTLPToken: enrolled.OTLPToken, CodexHome: codexHome, CodexPath: codexPath, CCUsagePath: ccusagePath, AgentPath: agentPath, StateDir: stateDir, Timezone: enrolled.ClassroomTimezone, HeartbeatSeconds: enrolled.HeartbeatSeconds}
+	c := &config.Config{ServerURL: strings.TrimRight(server, "/"), DeviceID: enrolled.DeviceID, StudentName: enrolled.StudentName, DeviceLabel: enrolled.DeviceLabel, PrivateKey: base64.StdEncoding.EncodeToString(private), PublicKey: base64.StdEncoding.EncodeToString(public), OTLPToken: enrolled.OTLPToken, CodexHome: codexHome, CodexPath: codexPath, CCUsagePath: ccusagePath, AgentPath: agentPath, StateDir: stateDir, Timezone: enrolled.ClassroomTimezone, HeartbeatSeconds: enrolled.HeartbeatSeconds, UsageSeconds: enrolled.UsageSeconds, IntegritySeconds: enrolled.IntegritySeconds}
 	c.Defaults()
 	if err := config.Save(configPath, c); err != nil {
 		return nil, err

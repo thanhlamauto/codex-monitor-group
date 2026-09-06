@@ -33,5 +33,12 @@ add_secret() {
 
 add_secret CRON_SECRET "$CRON_SECRET"
 add_config CLASSROOM_TIMEZONE "Asia/Ho_Chi_Minh"
+add_config DB_POOL_SIZE "1"
+add_config DB_MAX_OVERFLOW "1"
+add_config DB_POOL_RECYCLE_SECONDS "300"
+add_config HEARTBEAT_HISTORY_SECONDS "600"
+add_config HEARTBEAT_RETENTION_DAYS "30"
+add_config INTEGRITY_RETENTION_DAYS "30"
+add_config RECEIPT_RETENTION_DAYS "35"
 
 echo "Vercel environment configured. No web account or password is required."
