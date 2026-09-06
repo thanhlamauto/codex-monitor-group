@@ -32,7 +32,7 @@ The implementation tracks the current [official Codex OTel configuration](https:
 Prerequisites: a Linux VPS, Docker Engine with Compose v2, a DNS A/AAAA record pointing the chosen domain to the VPS, and inbound TCP 80/443 plus UDP 443.
 
 ```bash
-git clone <repo-url> codex-classroom-monitor
+git clone https://github.com/thanhlamauto/codex-monitor-group.git codex-classroom-monitor
 cd codex-classroom-monitor
 cp .env.example .env
 ```
@@ -197,5 +197,9 @@ Registration is intentionally public so anybody with the installer can join the 
 **A user with full root/admin control can disable any local monitoring software. The system is designed to detect loss of monitoring, not to guarantee prevention against a fully privileged adversary.** A privileged user can also forge local observations after extracting the device key. This is detection-oriented classroom telemetry, not a root-of-trust or cheating verdict system.
 
 Known MVP limitations: Windows Service is only abstracted, not shipped; macOS uses a root-owned `0600` key file rather than Keychain; the JSON queue is durable/atomic but not SQLite; schema creation is automatic rather than migration-managed; rate limiting is per server process; and horizontally scaling the API requires shared rate limiting plus an unreachable-event scheduler. One modest single-process VPS is the intended 20–500 student deployment.
+
+## Contributing
+
+The project is public and accepts pull requests from everyone. See [CONTRIBUTING.md](CONTRIBUTING.md) for the local test workflow, privacy rules, and fair-review policy. The protected `main` branch requires review and passing CI for owner and collaborators alike.
 
 See [architecture](docs/architecture.md), [privacy](docs/privacy.md), [protocol](docs/protocol.md), and [operations](docs/operations.md).
