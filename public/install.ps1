@@ -35,8 +35,22 @@ $ConfigPath = Join-Path $DataDir "config.json"
 $AgentPath = Join-Path $InstallDir "codex-guard.exe"
 $CCUsagePath = Join-Path $InstallDir "ccusage.exe"
 
+function Get-InteractiveProfilePath {
+    try {
+        $interactiveUser = (Get-CimInstance Win32_ComputerSystem).UserName
+        if (-not $interactiveUser) { return $null }
+        $sid = ([Security.Principal.NTAccount]$interactiveUser).Translate([Security.Principal.SecurityIdentifier]).Value
+        $profile = (Get-ItemProperty -LiteralPath "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid" -Name ProfileImagePath).ProfileImagePath
+        if ($profile) { return [Environment]::ExpandEnvironmentVariables($profile) }
+    }
+    catch { return $null }
+    return $null
+}
+
+$InteractiveProfile = Get-InteractiveProfilePath
 if (-not $CodexHome) {
     if ($env:CODEX_HOME) { $CodexHome = $env:CODEX_HOME }
+    elseif ($InteractiveProfile -and (Test-Path -LiteralPath (Join-Path $InteractiveProfile ".codex"))) { $CodexHome = Join-Path $InteractiveProfile ".codex" }
     else { $CodexHome = Join-Path $env:USERPROFILE ".codex" }
 }
 $CodexHome = [IO.Path]::GetFullPath($CodexHome)

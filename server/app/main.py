@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(title="Codex Classroom Monitor", version="1.3.0", lifespan=lifespan)
+app = FastAPI(title="Codex Classroom Monitor", version="1.3.1", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
@@ -177,7 +177,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             "week": usage_totals(db, student.id, today - timedelta(days=6), today)["total"],
             "alerts": open_alerts, "integrity": integrity,
             "telemetry": "OK" if device and device.last_otlp_at and state != "UNREACHABLE" else "MISSING",
-            "logs": "OK" if device and device.last_local_usage_at and state != "UNREACHABLE" else "UNKNOWN",
+            "logs": "OK" if latest_integrity and latest_integrity.files_checked > 0 and state != "UNREACHABLE" else "MISSING",
             "quota": quota, "quota_windows": quota_windows(quota),
         })
     class_today = sum(row["today"] for row in rows)
@@ -210,11 +210,12 @@ def student_detail(student_id: str, request: Request, db: Session = Depends(get_
     latest_integrity = db.scalar(select(IntegritySnapshot).where(IntegritySnapshot.device_id == device.id).order_by(IntegritySnapshot.created_at.desc())) if device else None
     quota = db.get(QuotaSnapshot, device.id) if device else None
     default_integrity = "OK" if latest_integrity and state != "UNREACHABLE" else "UNKNOWN"
+    session_logs_status = "TAMPER" if alert_types.intersection({"LOG_PREFIX_MODIFIED", "LOG_TRUNCATED", "LOG_DELETED", "ARCHIVED_LOG_MODIFIED"}) else ("OK" if latest_integrity and latest_integrity.files_checked > 0 and state != "UNREACHABLE" else "MISSING")
     integrity_status = {
         "Agent binary": "TAMPER" if "AGENT_BINARY_MODIFIED" in alert_types else default_integrity,
         "ccusage": "TAMPER" if "CCUSAGE_BINARY_MODIFIED" in alert_types else default_integrity,
         "Codex config": "TAMPER" if "TELEMETRY_CONFIG_CHANGED" in alert_types or "CODEX_HOME_CHANGED" in alert_types else default_integrity,
-        "Session logs": "TAMPER" if alert_types.intersection({"LOG_PREFIX_MODIFIED", "LOG_TRUNCATED", "LOG_DELETED", "ARCHIVED_LOG_MODIFIED"}) else default_integrity,
+        "Session logs": session_logs_status,
         "Monitor service": "TAMPER" if alert_types.intersection({"SERVICE_STOPPED_OR_MODIFIED", "SERVICE_RESTART_FAILED", "SERVICE_CONFIGURATION_CHANGED", "SERVICE_AUTOSTART_DISABLED", "SERVICE_RECOVERY_DISABLED", "WATCHDOG_DISABLED"}) else default_integrity,
         "Local protection": "TAMPER" if alert_types.intersection({"AGENT_PERMISSIONS_WEAKENED", "CONFIG_PERMISSIONS_WEAKENED", "KEY_PROTECTION_WEAK", "INTEGRITY_STATE_RESET", "INTEGRITY_STATE_ROLLBACK", "INTEGRITY_CHAIN_BROKEN", "INTEGRITY_SNAPSHOT_HASH_INVALID"}) else default_integrity,
     }
@@ -280,7 +281,7 @@ def heartbeat(envelope: SignedEnvelope, db: Session = Depends(get_db)):
     device.ccusage_sha256 = str(p["ccusage_sha256"])[:64].lower()
     device.codex_version = str(p.get("codex_version", ""))[:64]
     codex_home = str(p["codex_home"])[:64]
-    if device.codex_home_id and device.codex_home_id != codex_home:
+    if device.codex_home_id and device.codex_home_id != codex_home and p.get("codex_home_auto_discovered") is not True:
         add_security_event(db, device, "CODEX_HOME_CHANGED", f"codex-home:{envelope.event_id}", {"previous": device.codex_home_id, "current": codex_home})
     device.codex_home_id = codex_home
     config_fp = str(p.get("config_fingerprint", ""))[:64]
@@ -343,10 +344,11 @@ def usage(envelope: SignedEnvelope, db: Session = Depends(get_db)):
         report.output_tokens = day.output_tokens
         report.reasoning_output_tokens = day.reasoning_output_tokens
         report.total_tokens = day.total_tokens
-    if payload.source == "local":
-        device.last_local_usage_at = utcnow()
-    else:
-        device.last_otlp_at = utcnow()
+    if payload.days:
+        if payload.source == "local":
+            device.last_local_usage_at = utcnow()
+        else:
+            device.last_otlp_at = utcnow()
     db.commit()
     for day in payload.days:
         maybe_usage_mismatch(db, device, date.fromisoformat(day.date))

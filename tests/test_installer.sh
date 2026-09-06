@@ -19,6 +19,7 @@ grep -q 'windows-dpapi-machine' "$ROOT/agent/codex-guard/internal/config/secrets
 grep -q 'sc.exe create CodexGuard' "$ROOT/installer/install.ps1"
 grep -q 'schtasks.exe /Create /TN CodexGuardWatchdog' "$ROOT/installer/install.ps1"
 grep -q 'Get-FileHash -Algorithm SHA256' "$ROOT/installer/install.ps1"
+grep -q 'Get-InteractiveProfilePath' "$ROOT/installer/install.ps1"
 grep -q 'build_agent windows amd64' "$ROOT/scripts/build-release.sh"
 grep -q 'fetch_one windows-amd64' "$ROOT/scripts/fetch-ccusage.sh"
 if command -v pwsh >/dev/null 2>&1; then

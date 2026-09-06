@@ -23,7 +23,7 @@ import (
 	queuepkg "github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/queue"
 )
 
-const Version = "1.3.0"
+const Version = "1.3.1"
 
 type Client struct {
 	ConfigPath string
@@ -36,6 +36,10 @@ type Client struct {
 	quotaMu    sync.Mutex
 	quota      *QuotaSnapshot
 	quotaRead  time.Time
+	homeMu     sync.Mutex
+	homeRead   time.Time
+	homeSource string
+	homeAuto   bool
 }
 
 type EnrollResponse struct {
@@ -53,6 +57,35 @@ func New(configPath string) (*Client, error) {
 		return nil, err
 	}
 	return &Client{ConfigPath: configPath, Config: c, HTTP: &http.Client{Timeout: 20 * time.Second}, Queue: queuepkg.New(filepath.Join(c.StateDir, "queue.json"), c.RetentionDays), started: time.Now()}, nil
+}
+
+func (a *Client) refreshCodexHome() error {
+	a.homeMu.Lock()
+	defer a.homeMu.Unlock()
+	if !a.homeRead.IsZero() && time.Since(a.homeRead) < 5*time.Minute {
+		return nil
+	}
+	a.homeRead = time.Now()
+	resolution := ResolveCodexHome(a.Config.CodexHome)
+	a.homeSource = resolution.Source
+	if resolution.Path == "" || pathKey(resolution.Path) == pathKey(a.Config.CodexHome) {
+		return nil
+	}
+	hash, err := ConfigureTelemetry(resolution.Path, a.Config.ServerURL, a.Config.OTLPToken)
+	if err != nil {
+		return fmt.Errorf("configure discovered Codex home %q: %w", resolution.Path, err)
+	}
+	a.Config.CodexHome = resolution.Path
+	a.Config.ExpectedConfigHash = hash
+	a.homeAuto = true
+	a.quotaMu.Lock()
+	a.quota = nil
+	a.quotaRead = time.Time{}
+	a.quotaMu.Unlock()
+	if err := config.Save(a.ConfigPath, a.Config); err != nil {
+		return fmt.Errorf("save discovered Codex home: %w", err)
+	}
+	return nil
 }
 
 func Enroll(server, name, label, codexHome, codexPath, ccusagePath, agentPath, stateDir, configPath string) (*config.Config, error) {
@@ -163,8 +196,13 @@ func opaquePath(path string) string {
 }
 
 func (a *Client) Heartbeat() error {
+	if runtime.GOOS == "windows" {
+		if err := a.refreshCodexHome(); err != nil {
+			return err
+		}
+	}
 	configHash, configOK, _ := TelemetryStatus(a.Config.CodexHome, a.Config.ServerURL, a.Config.OTLPToken)
-	payload := map[string]any{"agent_version": Version, "agent_sha256": shaFile(a.Config.AgentPath), "ccusage_version": CCUsageVersion(a.Config.CCUsagePath), "ccusage_sha256": shaFile(a.Config.CCUsagePath), "codex_version": CodexVersion(a.Config.CodexPath), "codex_home": opaquePath(a.Config.CodexHome), "config_fingerprint": configHash, "telemetry_config_ok": configOK, "uptime_seconds": int64(time.Since(a.started).Seconds()), "os": runtime.GOOS, "arch": runtime.GOARCH}
+	payload := map[string]any{"agent_version": Version, "agent_sha256": shaFile(a.Config.AgentPath), "ccusage_version": CCUsageVersion(a.Config.CCUsagePath), "ccusage_sha256": shaFile(a.Config.CCUsagePath), "codex_version": CodexVersion(a.Config.CodexPath), "codex_home": opaquePath(a.Config.CodexHome), "codex_home_source": a.homeSource, "codex_home_auto_discovered": a.homeAuto, "config_fingerprint": configHash, "telemetry_config_ok": configOK, "uptime_seconds": int64(time.Since(a.started).Seconds()), "os": runtime.GOOS, "arch": runtime.GOARCH}
 	if quota := a.cachedQuota(); quota != nil {
 		payload["quota"] = quota
 	}

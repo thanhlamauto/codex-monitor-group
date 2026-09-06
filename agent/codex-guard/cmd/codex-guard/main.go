@@ -139,8 +139,9 @@ func status(args []string) error {
 	if err != nil {
 		return err
 	}
-	_, telemetryOK, fpErr := agent.TelemetryStatus(a.Config.CodexHome, a.Config.ServerURL, a.Config.OTLPToken)
-	fmt.Printf("Student      %s\nDevice       %s\nAgent        %s\nServer       %s\nCodex        %s\nTelemetry    %s\nLogs         %s\nccusage      %s\nQueue        %d pending\n", a.Config.StudentName, a.Config.DeviceLabel, localAgentStatus(), serverStatus(a.Config.ServerURL), agent.CodexVersion(a.Config.CodexPath), telemetryStatus(telemetryOK, fpErr), logs(a.Config.CodexHome), agent.CCUsageVersion(a.Config.CCUsagePath), a.Queue.Len())
+	resolution := agent.ResolveCodexHome(a.Config.CodexHome)
+	_, telemetryOK, fpErr := agent.TelemetryStatus(resolution.Path, a.Config.ServerURL, a.Config.OTLPToken)
+	fmt.Printf("Student      %s\nDevice       %s\nAgent        %s\nServer       %s\nCodex        %s\nCodex home   %s (%s)\nTelemetry    %s\nLogs         %s\nccusage      %s\nQueue        %d pending\n", a.Config.StudentName, a.Config.DeviceLabel, localAgentStatus(), serverStatus(a.Config.ServerURL), agent.CodexVersion(a.Config.CodexPath), resolution.Path, resolution.Source, telemetryStatus(telemetryOK, fpErr), logs(a.Config.CodexHome), agent.CCUsageVersion(a.Config.CCUsagePath), a.Queue.Len())
 	return nil
 }
 func telemetryStatus(valid bool, err error) string {
@@ -171,9 +172,9 @@ func serverStatus(server string) string {
 	return fmt.Sprintf("HTTP %d", response.StatusCode)
 }
 func logs(home string) string {
-	matches, _ := filepath.Glob(filepath.Join(home, "sessions", "*"))
-	if len(matches) > 0 {
-		return "found"
+	resolution := agent.ResolveCodexHome(home)
+	if resolution.LogCount > 0 {
+		return fmt.Sprintf("found (%d JSONL)", resolution.LogCount)
 	}
 	return "not found"
 }
@@ -188,10 +189,18 @@ func configure(args []string) error {
 	if err != nil {
 		return err
 	}
+	resolution := agent.ResolveCodexHome(c.CodexHome)
+	if resolution.Path != "" {
+		c.CodexHome = resolution.Path
+	}
 	hash, err := agent.ConfigureTelemetry(c.CodexHome, c.ServerURL, c.OTLPToken)
 	if err != nil {
 		return err
 	}
 	c.ExpectedConfigHash = hash
-	return config.Save(*path, c)
+	if err := config.Save(*path, c); err != nil {
+		return err
+	}
+	fmt.Printf("Codex home   %s (%s, %d JSONL)\n", c.CodexHome, resolution.Source, resolution.LogCount)
+	return nil
 }

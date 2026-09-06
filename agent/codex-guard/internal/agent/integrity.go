@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -280,6 +281,11 @@ func ScanIntegrity(codexHome, statePath string) (IntegrityPayload, error) {
 }
 
 func (a *Client) Integrity() error {
+	if runtime.GOOS == "windows" {
+		if err := a.refreshCodexHome(); err != nil {
+			return err
+		}
+	}
 	payload, err := ScanIntegrity(a.Config.CodexHome, filepath.Join(a.Config.StateDir, "integrity.json"))
 	if err != nil {
 		return err

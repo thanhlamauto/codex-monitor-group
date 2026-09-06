@@ -20,7 +20,7 @@ Service/ACL/watchdog posture ─────┤
                               public shared dashboard
 ```
 
-- **Agent:** static Go binary (`CGO_ENABLED=0`), Ed25519 device identity, monotonic sequence, chained integrity snapshots, 30-day durable JSON queue, exponential retry, local OTel filter, pinned native ccusage, append-only log verifier, service/watchdog posture checks, and privacy-filtered Codex quota reader.
+- **Agent:** static Go binary (`CGO_ENABLED=0`), Ed25519 device identity, monotonic sequence, chained integrity snapshots, 30-day durable JSON queue, exponential retry, local OTel filter, pinned native ccusage, automatic Codex-home recovery, append-only log verifier, service/watchdog posture checks, and privacy-filtered Codex quota reader.
 - **Backend/UI:** FastAPI + SQLAlchemy + server-rendered Jinja UI. This avoids a separate Node/frontend container and keeps a 20–500 student deployment small.
 - **Database:** PostgreSQL 17. Application-level append-only `security_events`; the UI exposes acknowledge but no delete.
 - **Edge:** Caddy automatic HTTPS.
@@ -81,7 +81,7 @@ Open the dashboard and run the command shown at the top:
 curl -fsSL https://codex-classroom-monitor.vercel.app/install.sh | sudo sh
 ```
 
-The installer asks only for the display name. It detects the computer name, OS, amd64/arm64, Codex home, and Codex executable automatically. It downloads `checksums.txt`, `codex-guard`, and pinned ccusage; fails closed on any checksum mismatch; creates a per-device Ed25519 identity; registers the person and device; safely replaces only the Codex `[otel]` configuration (saving `config.toml.codex-guard.bak`); and installs one of:
+The installer asks only for the display name. It detects the computer name, OS, amd64/arm64, Codex home, and Codex executable automatically. On Windows it resolves the interactive user's profile even when PowerShell is elevated with a different administrator account. The agent also checks `CODEX_HOME`, the configured location, and local OS profiles; if the stored location has no session logs, it safely switches to the candidate that has real Codex JSONL data. It downloads `checksums.txt`, `codex-guard`, and pinned ccusage; fails closed on any checksum mismatch; creates a per-device Ed25519 identity; registers the person and device; safely replaces only the Codex `[otel]` configuration (saving `config.toml.codex-guard.bak`); and installs one of:
 
 - Linux: a hardened systemd service plus a two-minute root watchdog timer.
 - macOS: a root launch daemon with `RunAtLoad`/`KeepAlive` plus a two-minute watchdog launch daemon.

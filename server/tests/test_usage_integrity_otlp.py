@@ -1,7 +1,7 @@
 import hashlib
 import json
 
-from app.models import SecurityEvent, UsageReport
+from app.models import Device, SecurityEvent, UsageReport
 from app.services import classroom_today
 
 from .helpers import enroll, signed
@@ -23,6 +23,19 @@ def test_normal_usage_import_duplicate_and_absolute_update(client, db):
     assert rows[0].total_tokens == 3000
 
 
+def test_empty_local_report_does_not_claim_logs_were_reconciled(client, db):
+    student, key, result = enroll(client, db)
+    empty = {"source": "local", "days": []}
+    assert client.post("/api/v1/usage", json=signed(key, result["device_id"], 1, empty)).status_code == 200
+    db.expire_all()
+    device = db.get(Device, result["device_id"])
+    assert device.last_local_usage_at is None
+    assert device.last_otlp_at is None
+    page = client.get(f"/students/{student.id}")
+    assert "Session logs" in page.text
+    assert "MISSING" in page.text
+
+
 def test_signed_local_collector_snapshot_reconciles_with_ccusage(client, db):
     _, key, result = enroll(client, db)
     assert client.post("/api/v1/usage", json=signed(key, result["device_id"], 1, usage_payload(5000))).status_code == 200
@@ -42,6 +55,25 @@ def test_integrity_accepts_allowlisted_metadata_and_rejects_paths(client, db):
     assert db.query(SecurityEvent).filter_by(event_type="LOG_TRUNCATED").count() == 1
     bad = {"files_checked": 1, "status": "OK", "findings": [], "file_metadata": [{"opaque_file_id": "x", "size": 1, "path": "/private/student/session.jsonl"}]}
     assert client.post("/api/v1/integrity", json=signed(key, result["device_id"], 2, bad)).status_code == 422
+
+
+def test_zero_checked_files_are_rendered_as_missing_not_ok(client, db):
+    student, key, result = enroll(client, db)
+    assert client.post("/api/v1/integrity", json=signed(key, result["device_id"], 1, integrity_payload())).status_code == 200
+    page = client.get(f"/students/{student.id}")
+    assert "Session logs" in page.text
+    assert "MISSING" in page.text
+
+
+def test_signed_auto_discovery_does_not_create_false_home_tamper(client, db):
+    from .helpers import heartbeat_payload
+
+    _, key, result = enroll(client, db)
+    first = heartbeat_payload(codex_home="a" * 64)
+    second = heartbeat_payload(codex_home="b" * 64, codex_home_auto_discovered=True)
+    assert client.post("/api/v1/heartbeat", json=signed(key, result["device_id"], 1, first)).status_code == 200
+    assert client.post("/api/v1/heartbeat", json=signed(key, result["device_id"], 2, second)).status_code == 200
+    assert db.query(SecurityEvent).filter_by(event_type="CODEX_HOME_CHANGED").count() == 0
 
 
 def test_student_detail_dashboard_renders(client, db):
