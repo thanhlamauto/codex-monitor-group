@@ -11,19 +11,20 @@ The server never stores prompts, assistant responses, source code, commands, fil
 ```text
 Codex CLI ──OTLP/HTTP JSON──> codex-guard on 127.0.0.1
                                   │ filters response.completed counters
-Codex JSONL ──metadata/hash───────┤
+Codex JSONL ──metadata/hash chain─┤
 Pinned ccusage 20.0.20 ──daily────┤ Ed25519-signed + durable queue
+Service/ACL/watchdog posture ─────┤
                                   ▼
                          Caddy → FastAPI → PostgreSQL
                                       │
                               public shared dashboard
 ```
 
-- **Agent:** dependency-free Go binary (`CGO_ENABLED=0`), Ed25519 device identity, monotonic sequence, 30-day durable JSON queue, exponential retry, local OTel filter, pinned native ccusage, append-only log verifier, and privacy-filtered Codex quota reader.
+- **Agent:** static Go binary (`CGO_ENABLED=0`), Ed25519 device identity, monotonic sequence, chained integrity snapshots, 30-day durable JSON queue, exponential retry, local OTel filter, pinned native ccusage, append-only log verifier, service/watchdog posture checks, and privacy-filtered Codex quota reader.
 - **Backend/UI:** FastAPI + SQLAlchemy + server-rendered Jinja UI. This avoids a separate Node/frontend container and keeps a 20–500 student deployment small.
 - **Database:** PostgreSQL 17. Application-level append-only `security_events`; the UI exposes acknowledge but no delete.
 - **Edge:** Caddy automatic HTTPS.
-- **Distribution:** the server image cross-builds four agent binaries, downloads and verifies ccusage `20.0.20`, publishes artifacts and checksums, and serves the installer.
+- **Distribution:** release builds cross-compile Linux, macOS, and Windows binaries for amd64/arm64, download and verify pinned ccusage `20.0.20`, publish artifacts and checksums, and serve both shell and PowerShell installers.
 
 The implementation tracks the current [official Codex OTel configuration](https://developers.openai.com/codex/config-advanced) and pins the [ccusage v20.0.20 source/schema](https://github.com/ccusage/ccusage/tree/v20.0.20). The current Codex fields used are `event.name=codex.sse_event`, `event.kind=response.completed`, `input_token_count`, `cached_token_count`, `output_token_count`, `reasoning_token_count`, and `tool_token_count`.
 
@@ -80,10 +81,19 @@ Open the dashboard and run the command shown at the top:
 curl -fsSL https://codex-classroom-monitor.vercel.app/install.sh | sudo sh
 ```
 
-The installer asks only for the display name. It detects the computer name, Linux/macOS, amd64/arm64, the original sudo user's home, and the Codex executable automatically. It downloads `checksums.txt`, `codex-guard`, and pinned ccusage; fails closed on any checksum mismatch; creates a per-device Ed25519 identity; registers the person and device; writes the private key only to `/etc/codex-guard/config.json` mode `0600`; safely replaces only the Codex `[otel]` configuration (saving `config.toml.codex-guard.bak`); and installs one of:
+The installer asks only for the display name. It detects the computer name, OS, amd64/arm64, Codex home, and Codex executable automatically. It downloads `checksums.txt`, `codex-guard`, and pinned ccusage; fails closed on any checksum mismatch; creates a per-device Ed25519 identity; registers the person and device; safely replaces only the Codex `[otel]` configuration (saving `config.toml.codex-guard.bak`); and installs one of:
 
-- Linux: `/etc/systemd/system/codex-guard.service`, `Restart=always`, `RestartSec=5`.
-- macOS: `/Library/LaunchDaemons/com.openai.codex-guard.plist`, `RunAtLoad` and `KeepAlive`.
+- Linux: a hardened systemd service plus a two-minute root watchdog timer.
+- macOS: a root launch daemon with `RunAtLoad`/`KeepAlive` plus a two-minute watchdog launch daemon.
+- Windows: a delayed-auto LocalSystem Windows Service with three recovery restarts plus a two-minute SYSTEM Task Scheduler watchdog. Credentials are encrypted at rest with machine-scoped DPAPI and the install/data trees are restricted to SYSTEM and Administrators.
+
+On Windows, open PowerShell as Administrator and run:
+
+```powershell
+irm https://codex-classroom-monitor.vercel.app/install.ps1 | iex
+```
+
+PowerShell options are `-Name "Display name"`, `-Server https://your-domain`, `-CodexHome C:\absolute\path\.codex`, and `-Upgrade` when running a downloaded installer script directly.
 
 For a nonstandard Codex home, use `curl -fsSL URL/install.sh | sudo sh -s -- --codex-home /absolute/path/to/.codex`. Noninteractive installation can pass `--name "Display name"`; a custom deployment can pass `--server https://your-domain`. Re-running the command is idempotent when the local registration config already exists. For an update, re-run it with `--upgrade`; only artifacts present in the server's checksummed release are accepted. There is no silent arbitrary auto-update.
 
@@ -119,6 +129,15 @@ sudo launchctl print system/com.openai.codex-guard
 sudo tail -100 /var/log/codex-guard.err.log
 ```
 
+Windows service checks (Administrator PowerShell):
+
+```powershell
+Get-Service CodexGuard
+sc.exe qfailure CodexGuard
+schtasks.exe /Query /TN CodexGuardWatchdog
+& "$env:ProgramFiles\CodexGuard\codex-guard.exe" status
+```
+
 ## Usage and reconciliation
 
 Source A is current Codex native OTel. Codex exports OTLP/HTTP JSON to `127.0.0.1:9464`; the agent accepts only authenticated local requests, selects only `response.completed` counters, discards everything else in memory, and sends an absolute per-day signed snapshot.
@@ -140,6 +159,9 @@ The dashboard provides Today, Yesterday, 7d, 30d, and custom ranges, input/cache
 - **Active JSONL:** checkpoint is `(opaque id, N, SHA256(bytes[0:N]))`. Growth must preserve the old prefix; shrink becomes `LOG_TRUNCATED`, changed prefix becomes `LOG_PREFIX_MODIFIED`.
 - **Delete/move:** a missing active file is matched against newly archived files using the old size and prefix. A valid move keeps its opaque ID. Otherwise it becomes `LOG_DELETED`.
 - **Archive:** closed files get a full SHA-256 and any later size/hash change becomes `ARCHIVED_LOG_MODIFIED`.
+- **Checkpoint rollback/reset:** each integrity scan advances a random-state-ID canonical SHA-256 chain. The server independently recomputes every snapshot hash and compares the scan number and previous hash; deletion/re-creation, rollback, broken links, or invalid hashes become explicit audit events.
+- **Monitor posture:** every integrity report covers service installation/running/autostart/restart policy, watchdog presence, protected agent/config permissions, expected key protection, and a service-definition fingerprint. Weakening or changing those controls creates an audit event.
+- **Watchdog:** a second privileged scheduler checks the primary service every two minutes, submits a signed `SERVICE_STOPPED_OR_MODIFIED` event when possible, and attempts a restart. Explicit uninstall submits `AGENT_UNINSTALL_REQUESTED` before removal.
 - **Availability:** 0–3 min is ONLINE, 3–10 min LATE, and over 10 min UNREACHABLE by default. `AGENT_UNREACHABLE` means monitoring is unavailable; it is deliberately distinct from tamper.
 
 Only opaque file IDs, sizes, prefix sizes/hashes, archive flags, and modification timestamps are uploaded. Raw JSONL is never uploaded or stored.
@@ -164,7 +186,7 @@ make test
 make release
 ```
 
-`make test` covers public self-registration and validation, Ed25519 mutation and replay, duplicate usage and absolute snapshot update, OTel privacy filtering, source mismatch, ONLINE/LATE/UNREACHABLE, FIFO offline replay, all six log mutation/move cases, and installer static checks. `make release` creates local artifacts in `dist/`; `make vercel-release` creates the same release under `public/` for Vercel CDN delivery.
+`make test` covers public self-registration and validation, Ed25519 mutation and replay, duplicate usage and absolute snapshot update, OTel privacy filtering, source mismatch, ONLINE/LATE/UNREACHABLE, FIFO offline replay, log mutation/move cases, integrity-chain rollback/reset/break detection, Windows posture alerts, watchdog events, and installer static checks. CI also runs Go tests and parses both PowerShell installers on Windows. `make release` creates local artifacts in `dist/`; `make vercel-release` creates the same release under `public/` for Vercel CDN delivery.
 
 API endpoints are versioned: `/api/v1/register`, `/api/v1/heartbeat`, `/api/v1/usage`, `/api/v1/integrity`, and `/api/v1/events`. The server deliberately has no raw OTLP ingestion endpoint: Codex exports only to the agent's loopback collector, which filters events before signing normalized counters for the API.
 
@@ -172,6 +194,12 @@ API endpoints are versioned: `/api/v1/register`, `/api/v1/heartbeat`, `/api/v1/u
 
 ```bash
 curl -fsSL https://meter.example.com/downloads/uninstall.sh | sudo sh
+```
+
+Windows (Administrator PowerShell):
+
+```powershell
+irm https://meter.example.com/downloads/uninstall.ps1 | iex
 ```
 
 The service and binaries are removed. Credentials/checkpoints remain for recoverability; remove `/etc/codex-guard` and `/var/lib/codex-guard` manually only if intentionally purging the device. The server naturally emits `AGENT_UNREACHABLE` after the heartbeat timeout and never deletes its audit history.
@@ -188,15 +216,15 @@ The service and binaries are removed. Credentials/checkpoints remain for recover
 
 ## Privacy and security assumptions
 
-Collected: token counters, event/day timestamps, versions, heartbeat/uptime, opaque home/file IDs, binary/config/file hashes, sizes, anomaly codes, Codex plan type, rate-limit percentages, window lengths, and reset times.
+Collected: token counters, event/day timestamps, versions, heartbeat/uptime, opaque home/file IDs, binary/config/file hashes, integrity-chain state/sequence/hashes, service posture booleans/fingerprint, OS/architecture, sizes, anomaly codes, Codex plan type, rate-limit percentages, window lengths, and reset times.
 
 Never collected: prompt text, assistant output, source code, file content, terminal commands, conversation content, raw JSONL, raw OTel records, or filesystem paths. `otel.log_user_prompt=false` is explicitly configured, and the loopback filter provides a second boundary before network transmission.
 
 Registration is intentionally public so anybody with the installer can join the shared dashboard. Reports still use standard Ed25519, per-device keys, signed canonical JSON, unique event IDs, and strictly increasing sequences, so one device cannot submit telemetry as another device without its private key. Server receipt time is always stored separately from client time. API requests are schema/size/rate limited.
 
-**A user with full root/admin control can disable any local monitoring software. The system is designed to detect loss of monitoring, not to guarantee prevention against a fully privileged adversary.** A privileged user can also forge local observations after extracting the device key. This is detection-oriented classroom telemetry, not a root-of-trust or cheating verdict system.
+**A user with full root/admin control can disable any local monitoring software. The system is designed to detect loss of monitoring, not to guarantee prevention against a fully privileged adversary.** A privileged user can also forge local observations after extracting the device key. DPAPI, restricted ACLs, root ownership, restart policies, watchdogs, and hash chains raise the effort and make ordinary tampering visible; they do not create a hardware-backed root of trust. This is detection-oriented classroom telemetry, not a root-of-trust or cheating verdict system.
 
-Known MVP limitations: Windows Service is only abstracted, not shipped; macOS uses a root-owned `0600` key file rather than Keychain; the JSON queue is durable/atomic but not SQLite; schema creation is automatic rather than migration-managed; rate limiting is per server process; and horizontally scaling the API requires shared rate limiting plus an unreachable-event scheduler. One modest single-process VPS is the intended 20–500 student deployment.
+Known MVP limitations: macOS/Linux use a root-owned `0600` key file rather than Keychain/TPM; Windows DPAPI uses machine scope so the LocalSystem service and watchdog can share the key; the JSON queue is durable/atomic but not SQLite; schema creation is automatic rather than migration-managed; rate limiting is per server process; and horizontally scaling the API requires shared rate limiting plus an unreachable-event scheduler. One modest single-process VPS is the intended 20–500 student deployment.
 
 ## Contributing
 

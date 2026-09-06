@@ -79,6 +79,16 @@ main {
   gap: 8px;
   min-width: 0;
 }
+.install-options {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.install-options label {
+  color: #627169;
+  font-size: 12px;
+  font-weight: 750;
+}
 .install-command code {
   display: block;
   flex: 1;

@@ -9,26 +9,29 @@ import (
 )
 
 type Config struct {
-	ServerURL          string `json:"server_url"`
-	DeviceID           string `json:"device_id"`
-	StudentName        string `json:"student_name"`
-	DeviceLabel        string `json:"device_label"`
-	PrivateKey         string `json:"private_key"`
-	PublicKey          string `json:"public_key"`
-	OTLPToken          string `json:"otlp_token"`
-	CodexHome          string `json:"codex_home"`
-	CodexPath          string `json:"codex_path"`
-	CCUsagePath        string `json:"ccusage_path"`
-	AgentPath          string `json:"agent_path"`
-	StateDir           string `json:"state_dir"`
-	Timezone           string `json:"timezone"`
-	HeartbeatSeconds   int    `json:"heartbeat_seconds"`
-	UsageSeconds       int    `json:"usage_seconds"`
-	IntegritySeconds   int    `json:"integrity_seconds"`
-	RetentionDays      int    `json:"retention_days"`
-	NextSequence       uint64 `json:"next_sequence"`
-	ExpectedConfigHash string `json:"expected_config_hash"`
-	OTelListen         string `json:"otel_listen"`
+	ServerURL           string `json:"server_url"`
+	DeviceID            string `json:"device_id"`
+	StudentName         string `json:"student_name"`
+	DeviceLabel         string `json:"device_label"`
+	PrivateKey          string `json:"private_key,omitempty"`
+	ProtectedPrivateKey string `json:"private_key_protected,omitempty"`
+	PublicKey           string `json:"public_key"`
+	OTLPToken           string `json:"otlp_token,omitempty"`
+	ProtectedOTLPToken  string `json:"otlp_token_protected,omitempty"`
+	KeyProtection       string `json:"key_protection"`
+	CodexHome           string `json:"codex_home"`
+	CodexPath           string `json:"codex_path"`
+	CCUsagePath         string `json:"ccusage_path"`
+	AgentPath           string `json:"agent_path"`
+	StateDir            string `json:"state_dir"`
+	Timezone            string `json:"timezone"`
+	HeartbeatSeconds    int    `json:"heartbeat_seconds"`
+	UsageSeconds        int    `json:"usage_seconds"`
+	IntegritySeconds    int    `json:"integrity_seconds"`
+	RetentionDays       int    `json:"retention_days"`
+	NextSequence        uint64 `json:"next_sequence"`
+	ExpectedConfigHash  string `json:"expected_config_hash"`
+	OTelListen          string `json:"otel_listen"`
 }
 
 func (c *Config) Defaults() {
@@ -67,6 +70,18 @@ func Load(path string) (*Config, error) {
 	if err := json.Unmarshal(data, &c); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	if c.PrivateKey == "" && c.ProtectedPrivateKey != "" {
+		c.PrivateKey, err = unprotectSecret(c.ProtectedPrivateKey)
+		if err != nil {
+			return nil, fmt.Errorf("unprotect device private key: %w", err)
+		}
+	}
+	if c.OTLPToken == "" && c.ProtectedOTLPToken != "" {
+		c.OTLPToken, err = unprotectSecret(c.ProtectedOTLPToken)
+		if err != nil {
+			return nil, fmt.Errorf("unprotect OTel token: %w", err)
+		}
+	}
 	c.Defaults()
 	if c.ServerURL == "" || c.DeviceID == "" || c.PrivateKey == "" {
 		return nil, errors.New("config is incomplete")
@@ -79,7 +94,28 @@ func Save(path string, c *Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(c, "", "  ")
+	disk := *c
+	if secureSecretStorage() {
+		var err error
+		disk.ProtectedPrivateKey, err = protectSecret(c.PrivateKey)
+		if err != nil {
+			return fmt.Errorf("protect device private key: %w", err)
+		}
+		disk.ProtectedOTLPToken, err = protectSecret(c.OTLPToken)
+		if err != nil {
+			return fmt.Errorf("protect OTel token: %w", err)
+		}
+		disk.PrivateKey = ""
+		disk.OTLPToken = ""
+		disk.KeyProtection = protectionName()
+		c.KeyProtection = disk.KeyProtection
+	} else {
+		disk.ProtectedPrivateKey = ""
+		disk.ProtectedOTLPToken = ""
+		disk.KeyProtection = protectionName()
+		c.KeyProtection = disk.KeyProtection
+	}
+	data, err := json.MarshalIndent(&disk, "", "  ")
 	if err != nil {
 		return err
 	}

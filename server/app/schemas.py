@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class EnrollRequest(BaseModel):
@@ -71,7 +71,12 @@ class IntegrityFinding(BaseModel):
     event_type: Literal[
         "AGENT_BINARY_MODIFIED", "CCUSAGE_BINARY_MODIFIED", "TELEMETRY_CONFIG_CHANGED",
         "CODEX_HOME_CHANGED", "LOG_PREFIX_MODIFIED", "LOG_TRUNCATED", "LOG_DELETED",
-        "ARCHIVED_LOG_MODIFIED", "USAGE_SOURCE_MISMATCH", "AGENT_UNINSTALL_REQUESTED"
+        "ARCHIVED_LOG_MODIFIED", "USAGE_SOURCE_MISMATCH", "AGENT_UNINSTALL_REQUESTED",
+        "SERVICE_STOPPED_OR_MODIFIED", "SERVICE_RESTART_FAILED", "SERVICE_CONFIGURATION_CHANGED",
+        "SERVICE_AUTOSTART_DISABLED", "SERVICE_RECOVERY_DISABLED", "WATCHDOG_DISABLED",
+        "AGENT_PERMISSIONS_WEAKENED", "CONFIG_PERMISSIONS_WEAKENED", "KEY_PROTECTION_WEAK",
+        "INTEGRITY_STATE_RESET", "INTEGRITY_STATE_ROLLBACK", "INTEGRITY_CHAIN_BROKEN",
+        "INTEGRITY_SNAPSHOT_HASH_INVALID"
     ]
     severity: Literal["INFO", "WARNING", "CRITICAL"]
     opaque_file_id: str | None = Field(default=None, max_length=64)
@@ -91,6 +96,23 @@ class FileMetadata(BaseModel):
     mtime_unix: int
 
 
+class MonitorPosture(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    os: Literal["linux", "darwin", "windows"]
+    service_manager: Literal["systemd", "launchd", "windows-scm", "unsupported"]
+    service_installed: bool
+    service_running: bool
+    auto_start_ok: bool
+    restart_policy_ok: bool
+    watchdog_expected: bool
+    watchdog_ok: bool
+    agent_permissions_ok: bool
+    config_permissions_ok: bool
+    key_protection: str = Field(min_length=1, max_length=64)
+    service_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class IntegrityPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -98,3 +120,17 @@ class IntegrityPayload(BaseModel):
     status: Literal["OK", "TAMPER", "UNKNOWN"]
     findings: list[IntegrityFinding] = Field(default_factory=list, max_length=1000)
     file_metadata: list[FileMetadata] = Field(default_factory=list, max_length=10000)
+    state_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    scan_sequence: int | None = Field(default=None, ge=1)
+    previous_snapshot_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    snapshot_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    monitor_posture: MonitorPosture | None = None
+
+    @model_validator(mode="after")
+    def complete_chain(self):
+        present = (self.state_id is not None, self.scan_sequence is not None, self.snapshot_hash is not None)
+        if any(present) and not all(present):
+            raise ValueError("state_id, scan_sequence, and snapshot_hash must be supplied together")
+        if self.previous_snapshot_hash is not None and not all(present):
+            raise ValueError("previous_snapshot_hash requires a complete integrity chain")
+        return self

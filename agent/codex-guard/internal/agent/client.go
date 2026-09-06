@@ -18,12 +18,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/example/codex-classroom-monitor/agent/codex-guard/internal/config"
-	"github.com/example/codex-classroom-monitor/agent/codex-guard/internal/protocol"
-	queuepkg "github.com/example/codex-classroom-monitor/agent/codex-guard/internal/queue"
+	"github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/config"
+	"github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/protocol"
+	queuepkg "github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/queue"
 )
 
-const Version = "1.2.0"
+const Version = "1.3.0"
 
 type Client struct {
 	ConfigPath string
@@ -169,6 +169,14 @@ func (a *Client) Heartbeat() error {
 		payload["quota"] = quota
 	}
 	if err := a.enqueue("/api/v1/heartbeat", payload); err != nil {
+		return err
+	}
+	return a.Flush()
+}
+
+func (a *Client) SecurityEvent(eventType string, details map[string]any) error {
+	payload := map[string]any{"event_type": eventType, "details": details}
+	if err := a.enqueue("/api/v1/events", payload); err != nil {
 		return err
 	}
 	return a.Flush()

@@ -18,7 +18,7 @@ def seed_student(db, name: str, label: str, today_total: int, week_total: int, l
     now = utcnow()
     device = Device(
         student_id=student.id, label=label, public_key="demo-public-key", otlp_token_hash="demo",
-        last_seen=now - timedelta(minutes=last_seen_minutes), agent_version="1.2.0", agent_sha256="demo",
+        last_seen=now - timedelta(minutes=last_seen_minutes), agent_version="1.3.0", agent_sha256="demo",
         ccusage_version="20.0.20", ccusage_sha256="demo", codex_version="codex-cli 0.133.0",
         codex_home_id="demo", last_otlp_at=now - timedelta(minutes=last_seen_minutes),
         last_local_usage_at=now - timedelta(minutes=last_seen_minutes),

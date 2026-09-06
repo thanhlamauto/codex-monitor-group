@@ -8,15 +8,25 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/example/codex-classroom-monitor/agent/codex-guard/internal/agent"
-	"github.com/example/codex-classroom-monitor/agent/codex-guard/internal/config"
+	"github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/agent"
+	"github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/config"
 )
 
-const defaultConfig = "/etc/codex-guard/config.json"
+func defaultConfigPath() string {
+	if runtime.GOOS == "windows" {
+		base := os.Getenv("ProgramData")
+		if base == "" {
+			base = `C:\ProgramData`
+		}
+		return filepath.Join(base, "CodexGuard", "config.json")
+	}
+	return "/etc/codex-guard/config.json"
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -35,6 +45,10 @@ func main() {
 		err = status(os.Args[2:])
 	case "configure-telemetry":
 		err = configure(os.Args[2:])
+	case "watchdog":
+		err = watchdog(os.Args[2:])
+	case "uninstall-notice":
+		err = uninstallNotice(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Printf("codex-guard %s\n", agent.Version)
 	default:
@@ -48,7 +62,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "Usage: codex-guard <enroll|run|once|status|configure-telemetry|version>")
+	fmt.Fprintln(os.Stderr, "Usage: codex-guard <enroll|run|once|status|configure-telemetry|watchdog|uninstall-notice|version>")
 }
 
 func enroll(args []string) error {
@@ -61,7 +75,7 @@ func enroll(args []string) error {
 	codex := f.String("codex", "codex", "Codex binary")
 	binary := f.String("agent", "/usr/local/bin/codex-guard", "agent binary")
 	state := f.String("state-dir", "/var/lib/codex-guard", "state directory")
-	configPath := f.String("config", defaultConfig, "config path")
+	configPath := f.String("config", defaultConfigPath(), "config path")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -74,7 +88,7 @@ func enroll(args []string) error {
 
 func load(args []string, name string) (*agent.Client, error) {
 	f := flag.NewFlagSet(name, flag.ContinueOnError)
-	path := f.String("config", defaultConfig, "config path")
+	path := f.String("config", defaultConfigPath(), "config path")
 	if err := f.Parse(args); err != nil {
 		return nil, err
 	}
@@ -92,9 +106,32 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	handled, serviceErr := agent.RunAsPlatformService(a)
+	if serviceErr != nil {
+		return serviceErr
+	}
+	if handled {
+		return nil
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return a.Run(ctx)
+}
+
+func watchdog(args []string) error {
+	a, err := load(args, "watchdog")
+	if err != nil {
+		return err
+	}
+	return a.Watchdog()
+}
+
+func uninstallNotice(args []string) error {
+	a, err := load(args, "uninstall-notice")
+	if err != nil {
+		return err
+	}
+	return a.SecurityEvent("AGENT_UNINSTALL_REQUESTED", map[string]any{"requested": true})
 }
 
 func status(args []string) error {
@@ -143,7 +180,7 @@ func logs(home string) string {
 
 func configure(args []string) error {
 	f := flag.NewFlagSet("configure-telemetry", flag.ContinueOnError)
-	path := f.String("config", defaultConfig, "config path")
+	path := f.String("config", defaultConfigPath(), "config path")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
