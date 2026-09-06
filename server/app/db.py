@@ -5,14 +5,14 @@ import threading
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-from .config import settings
+from .config import database_connect_args, settings
 
 
 class Base(DeclarativeBase):
     pass
 
 
-connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+connect_args = database_connect_args(settings.database_url)
 engine_options = {"pool_pre_ping": True, "connect_args": connect_args}
 if not settings.database_url.startswith("sqlite"):
     # A tiny per-instance pool reuses TLS/database handshakes across warm Vercel

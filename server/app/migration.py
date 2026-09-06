@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from sqlalchemy import MetaData, create_engine, func, select
 from sqlalchemy.engine import Engine
 
-from .config import normalize_database_url
+from .config import database_connect_args, normalize_database_url
 from .db import Base
 from . import models as _models  # noqa: F401 - registers every mapped table
 
@@ -22,7 +22,8 @@ def _batches(rows: Iterator[dict], size: int = 500) -> Iterator[list[dict]]:
 
 
 def _engine(url: str) -> Engine:
-    return create_engine(normalize_database_url(url), pool_pre_ping=True)
+    normalized = normalize_database_url(url)
+    return create_engine(normalized, pool_pre_ping=True, connect_args=database_connect_args(normalized))
 
 
 def migrate_database(source_url: str, target_url: str) -> dict[str, int]:
