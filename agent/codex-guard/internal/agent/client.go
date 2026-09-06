@@ -23,7 +23,7 @@ import (
 	queuepkg "github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/queue"
 )
 
-const Version = "1.3.1"
+const Version = "1.3.2"
 
 type Client struct {
 	ConfigPath string
@@ -71,12 +71,11 @@ func (a *Client) refreshCodexHome() error {
 	if resolution.Path == "" || pathKey(resolution.Path) == pathKey(a.Config.CodexHome) {
 		return nil
 	}
-	hash, err := ConfigureTelemetry(resolution.Path, a.Config.ServerURL, a.Config.OTLPToken)
-	if err != nil {
-		return fmt.Errorf("configure discovered Codex home %q: %w", resolution.Path, err)
-	}
+	hash, telemetryErr := ConfigureTelemetry(resolution.Path, a.Config.ServerURL, a.Config.OTLPToken)
 	a.Config.CodexHome = resolution.Path
-	a.Config.ExpectedConfigHash = hash
+	if telemetryErr == nil {
+		a.Config.ExpectedConfigHash = hash
+	}
 	a.homeAuto = true
 	a.quotaMu.Lock()
 	a.quota = nil
@@ -196,10 +195,8 @@ func opaquePath(path string) string {
 }
 
 func (a *Client) Heartbeat() error {
-	if runtime.GOOS == "windows" {
-		if err := a.refreshCodexHome(); err != nil {
-			return err
-		}
+	if err := a.refreshCodexHome(); err != nil {
+		return err
 	}
 	configHash, configOK, _ := TelemetryStatus(a.Config.CodexHome, a.Config.ServerURL, a.Config.OTLPToken)
 	payload := map[string]any{"agent_version": Version, "agent_sha256": shaFile(a.Config.AgentPath), "ccusage_version": CCUsageVersion(a.Config.CCUsagePath), "ccusage_sha256": shaFile(a.Config.CCUsagePath), "codex_version": CodexVersion(a.Config.CodexPath), "codex_home": opaquePath(a.Config.CodexHome), "codex_home_source": a.homeSource, "codex_home_auto_discovered": a.homeAuto, "config_fingerprint": configHash, "telemetry_config_ok": configOK, "uptime_seconds": int64(time.Since(a.started).Seconds()), "os": runtime.GOOS, "arch": runtime.GOARCH}
