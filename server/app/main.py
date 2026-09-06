@@ -188,7 +188,9 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     quota_devices = sum(bool(row["quota_windows"]) for row in rows)
     install_command = f"curl -fsSL {settings.public_base_url}/install.sh | sudo sh"
     windows_install_command = f"irm {settings.public_base_url}/install.ps1 | iex"
-    return templates.TemplateResponse(request, "dashboard.html", {"rows": rows, "top_students": top_students, "class_today": class_today, "class_week": class_week, "timezone": settings.classroom_timezone, "install_command": install_command, "windows_install_command": windows_install_command, "quota_min": quota_min, "quota_devices": quota_devices})
+    unix_update_command = f"curl -fsSL {settings.public_base_url}/install.sh | sudo sh -s -- --upgrade"
+    wsl_uninstall_command = f"curl -fsSL {settings.public_base_url}/downloads/uninstall.sh | sudo sh"
+    return templates.TemplateResponse(request, "dashboard.html", {"rows": rows, "top_students": top_students, "class_today": class_today, "class_week": class_week, "timezone": settings.classroom_timezone, "install_command": install_command, "windows_install_command": windows_install_command, "unix_update_command": unix_update_command, "windows_update_command": windows_install_command, "wsl_uninstall_command": wsl_uninstall_command, "quota_min": quota_min, "quota_devices": quota_devices})
 
 
 @app.get("/students/{student_id}", response_class=HTMLResponse)

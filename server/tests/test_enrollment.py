@@ -38,6 +38,11 @@ def test_dashboard_is_public_and_shows_one_line_installer(client):
     assert page.status_code == 200
     assert "Không cần tài khoản" in page.text
     assert "curl -fsSL https://meter.test/install.sh | sudo sh" in page.text
+    assert "curl -fsSL https://meter.test/install.sh | sudo sh -s -- --upgrade" in page.text
+    assert "irm https://meter.test/install.ps1 | iex" in page.text
+    assert "curl -fsSL https://meter.test/downloads/uninstall.sh | sudo sh" in page.text
+    assert "Lỡ chạy lệnh Linux trên Windows?" in page.text
+    assert "Nếu Codex cũng chạy bên trong WSL" in page.text
     assert client.get("/login").status_code == 404
 
 
