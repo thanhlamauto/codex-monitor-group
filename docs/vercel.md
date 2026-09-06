@@ -9,6 +9,7 @@ The dashboard and API run as one Python FastAPI Function on Vercel Hobby. Durabl
 - For proactive ten-minute alerts without opening the dashboard, use an external scheduler to call `GET /api/v1/cron/reconcile` with `Authorization: Bearer $CRON_SECRET`, or move to a plan that permits frequent cron execution.
 - Do not deploy without a persistent SQL database. The application deliberately refuses to use ephemeral SQLite when `VERCEL=1`.
 - One warm Vercel function keeps a pool of one database connection with one overflow connection. Do not raise these defaults without checking CockroachDB connection and Vercel concurrency metrics.
+- `vercel.json` pins the Python Function to Singapore (`sin1`), next to the AWS Singapore CockroachDB cluster, to avoid a trans-Pacific database round trip.
 
 ## Prepare release files
 
