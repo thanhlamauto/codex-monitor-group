@@ -1,13 +1,14 @@
 # Free Vercel deployment
 
-The dashboard and API run as one Python FastAPI Function on Vercel Hobby. Durable relational data lives in a Neon Postgres database connected through Vercel Marketplace. Release binaries are static files under `public/` and are delivered by Vercel's CDN.
+The dashboard and API run as one Python FastAPI Function on Vercel Hobby. Durable relational data lives in CockroachDB Basic over its PostgreSQL-compatible TLS endpoint. Release binaries are static files under `public/` and are delivered by Vercel's CDN.
 
 ## Constraints
 
 - Vercel Hobby is intended for personal/non-commercial projects and is subject to its included usage limits.
-- Hobby cron jobs can run only once per day. ONLINE/LATE/UNREACHABLE is therefore computed from `last_seen` whenever the dashboard is opened; opening the dashboard also appends any newly detected unreachable event.
+- Hobby cron jobs can run only once per day. ONLINE/LATE/UNREACHABLE is therefore computed from `last_seen` whenever the dashboard is opened; the authenticated daily cron also appends newly detected unreachable events and applies telemetry retention.
 - For proactive ten-minute alerts without opening the dashboard, use an external scheduler to call `GET /api/v1/cron/reconcile` with `Authorization: Bearer $CRON_SECRET`, or move to a plan that permits frequent cron execution.
-- Do not deploy without a persistent Postgres integration. The application deliberately refuses to use ephemeral SQLite when `VERCEL=1`.
+- Do not deploy without a persistent SQL database. The application deliberately refuses to use ephemeral SQLite when `VERCEL=1`.
+- One warm Vercel function keeps a pool of one database connection with one overflow connection. Do not raise these defaults without checking CockroachDB connection and Vercel concurrency metrics.
 
 ## Prepare release files
 
@@ -27,11 +28,17 @@ Use Vercel CLI 48.1.8 or newer. The commands below intentionally use the current
 npx --yes vercel@latest login
 npx --yes vercel@latest whoami
 npx --yes vercel@latest link
-npx --yes vercel@latest integration guide neon
-npx --yes vercel@latest integration add neon
 ```
 
-During Neon provisioning, select its free plan. Stop rather than approving any paid plan. The Marketplace integration should connect the resource and inject `DATABASE_URL` or `POSTGRES_URL`.
+Create a CockroachDB Cloud **Basic** cluster in a region close to the Vercel function, create a `codex_monitor` database, and copy its TLS `postgresql://` connection string. Do not select Standard or Advanced. The app recognizes `*.cockroachlabs.cloud` and converts the URL to the official `cockroachdb+psycopg` SQLAlchemy dialect.
+
+Add the connection string as a sensitive Vercel variable without putting it in shell history or source control:
+
+```bash
+npx --yes vercel@latest env add DATABASE_URL production --sensitive
+```
+
+Use a separate database/credential for Preview and Development. Do not point untrusted preview deployments at the production database.
 
 Confirm variable names without printing their values:
 
@@ -50,9 +57,30 @@ The dashboard and device detail pages are public by design: there is no web acco
 ```text
 CRON_SECRET=<independent random secret>
 CLASSROOM_TIMEZONE=Asia/Ho_Chi_Minh
+DB_POOL_SIZE=1
+DB_MAX_OVERFLOW=1
+DB_POOL_RECYCLE_SECONDS=300
+HEARTBEAT_HISTORY_SECONDS=600
+HEARTBEAT_RETENTION_DAYS=30
+INTEGRITY_RETENTION_DAYS=30
+RECEIPT_RETENTION_DAYS=35
 ```
 
 `PUBLIC_BASE_URL` is optional on Vercel: the application derives it from `VERCEL_PROJECT_PRODUCTION_URL`. Set it explicitly when using a custom domain.
+
+## Migrate an existing database
+
+Use secret environment variables in the local process; never commit connection strings:
+
+```bash
+export SOURCE_DATABASE_URL='<old PostgreSQL URL>'
+export TARGET_DATABASE_URL='<empty CockroachDB URL>'
+PYTHONPATH=server python3 scripts/migrate_database.py
+```
+
+The target must be empty. Migration creates the current schema and copies all available legacy columns atomically in foreign-key order. Stable student/device IDs, device public keys, sequence counters, usage reports, audit events, heartbeats, integrity snapshots, and quota snapshots are preserved. New sampling and receipt fields start with safe defaults.
+
+After migration succeeds, replace Production `DATABASE_URL`, redeploy, verify `/healthz`, the public dashboard, and one signed agent heartbeat, then disconnect the old database integration. If the old provider has suspended all queries, export cannot proceed until it restores read access; do not switch an empty database into production unless you intentionally accept re-enrollment and loss of old history.
 
 ## Deploy and verify
 

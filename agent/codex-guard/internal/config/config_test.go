@@ -31,3 +31,18 @@ func TestConfigRoundTrip(t *testing.T) {
 		t.Fatal("private key was written in plaintext")
 	}
 }
+
+func TestLegacyIntegrityIntervalIsRaised(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	want := &Config{ServerURL: "https://meter.example", DeviceID: "device", PrivateKey: "private", StateDir: t.TempDir(), IntegritySeconds: 60}
+	if err := Save(path, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.IntegritySeconds != 300 {
+		t.Fatalf("integrity interval = %d, want 300", got.IntegritySeconds)
+	}
+}

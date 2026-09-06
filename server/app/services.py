@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import Device, SecurityEvent, UsageReport
+from .models import Device, Heartbeat, IntegritySnapshot, ProcessedEvent, SecurityEvent, UsageReport
 
 
 SEVERITY = {
@@ -80,6 +80,21 @@ def reconcile_unreachable(db: Session, now: datetime | None = None):
         if device_state(device, now) == "UNREACHABLE":
             incident = device.last_seen.isoformat() if device.last_seen else "never"
             add_security_event(db, device, "AGENT_UNREACHABLE", f"unreachable:{incident}", {"last_seen": device.last_seen.isoformat() if device.last_seen else None})
+
+
+def purge_expired_telemetry(db: Session, now: datetime | None = None) -> dict[str, int]:
+    """Delete bounded raw telemetry while preserving usage and audit history."""
+    now = now or datetime.now(timezone.utc)
+    policies = (
+        ("heartbeats", Heartbeat, Heartbeat.received_at, settings.heartbeat_retention_days),
+        ("integrity_snapshots", IntegritySnapshot, IntegritySnapshot.created_at, settings.integrity_retention_days),
+        ("processed_events", ProcessedEvent, ProcessedEvent.received_at, settings.receipt_retention_days),
+    )
+    deleted: dict[str, int] = {}
+    for name, model, timestamp, days in policies:
+        result = db.execute(delete(model).where(timestamp < now - timedelta(days=max(1, days))))
+        deleted[name] = max(0, result.rowcount or 0)
+    return deleted
 
 
 def usage_totals(db: Session, student_id: str, start: date, end: date, source: str = "local") -> dict:

@@ -2,6 +2,10 @@
 
 Back up the `postgres_data` Docker volume and Caddy data. Audit rows have no delete route but database administrators remain trusted. Monitor `/healthz`, container health, disk, and PostgreSQL backups.
 
+On Vercel, the authenticated daily cron samples reachability and deletes only bounded raw telemetry: heartbeat and integrity snapshots default to 30 days, while idempotency receipts default to 35 days to outlive the agent's 30-day offline queue. Usage reports and security events are not deleted. Override the documented `*_RETENTION_DAYS` variables only after preserving that queue/receipt relationship.
+
+To move providers, set `SOURCE_DATABASE_URL` and `TARGET_DATABASE_URL` in the local process and run `PYTHONPATH=server python3 scripts/migrate_database.py`. The target must be empty. The script creates the current schema and copies all legacy tables in one target transaction while preserving stable student/device IDs, device public keys, sequence counters, usage, and audit history. It never prints either connection string.
+
 To upgrade, pull a reviewed release and run `docker compose up -d --build`. Existing database tables are preserved. For the MVP, review model changes before deployment because automatic schema migration is not yet included.
 
 ## Device protection checks

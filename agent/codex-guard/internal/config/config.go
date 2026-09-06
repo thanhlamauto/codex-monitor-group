@@ -43,8 +43,12 @@ func (c *Config) Defaults() {
 	if c.UsageSeconds == 0 {
 		c.UsageSeconds = 300
 	}
-	if c.IntegritySeconds == 0 {
-		c.IntegritySeconds = 60
+	// Integrity scans hash local session files and inspect the service posture.
+	// Five minutes keeps tamper detection timely without opening a database
+	// transaction every minute on every enrolled device. Existing 60-second
+	// configs are upgraded automatically when the service restarts.
+	if c.IntegritySeconds < 300 {
+		c.IntegritySeconds = 300
 	}
 	if c.RetentionDays == 0 {
 		c.RetentionDays = 30

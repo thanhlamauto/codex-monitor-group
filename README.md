@@ -2,7 +2,7 @@
 
 Public, shared token-usage and monitoring-integrity dashboard for a group using Codex CLI. Nobody needs a web account. Each person runs one installer command, enters a display name, and the device immediately registers itself on the dashboard with its own Ed25519 identity.
 
-The web/API can also run on the free Vercel Hobby tier with Neon Postgres. Run `make vercel-release`, connect the repository to Vercel, provision Neon through Vercel Marketplace, set the optional reconciliation secret, and deploy. See [Free Vercel deployment](docs/vercel.md).
+The web/API can also run on the free Vercel Hobby tier with CockroachDB Basic. Run `make vercel-release`, connect the repository to Vercel, create a Basic cluster, set its TLS connection string as `DATABASE_URL`, and deploy. See [Free Vercel deployment](docs/vercel.md).
 
 The server never stores prompts, assistant responses, source code, commands, file contents, conversations, or raw Codex JSONL. Codex OTel is sent to a loopback-only collector inside `codex-guard`; only normalized counters leave the device.
 
@@ -60,18 +60,19 @@ The first build cross-compiles the four release artifacts and fetches the pinned
 
 For local-only evaluation, keep `SITE_ADDRESS=http://localhost` and `PUBLIC_BASE_URL=http://localhost`.
 
-### Free Vercel + Neon deployment
+### Free Vercel + CockroachDB Basic deployment
 
 ```bash
 make vercel-release
 npx --yes vercel@latest login
 npx --yes vercel@latest link
-npx --yes vercel@latest integration add neon
-# Add CRON_SECRET and CLASSROOM_TIMEZONE
+# Create a CockroachDB Basic database, then add its TLS URL as DATABASE_URL.
+# Add CRON_SECRET, retention, pooling, and CLASSROOM_TIMEZONE.
+./scripts/provision-vercel-env.sh
 npx --yes vercel@latest --prod
 ```
 
-The Vercel app uses the auto-provided `DATABASE_URL`/`POSTGRES_URL`, automatic HTTPS, and static CDN delivery for the installer artifacts. It refuses to start on ephemeral SQLite. See [docs/vercel.md](docs/vercel.md) for the safe provisioning order and Hobby-plan limitation around frequent cron jobs.
+The Vercel app automatically selects the official CockroachDB SQLAlchemy dialect when `DATABASE_URL` points to `*.cockroachlabs.cloud`, uses a bounded warm-instance connection pool, automatic HTTPS, and static CDN delivery for installer artifacts. It refuses to start on ephemeral SQLite. See [docs/vercel.md](docs/vercel.md) for provisioning and migration.
 
 ## One-line installation
 
@@ -150,6 +151,8 @@ ccusage codex daily --json --no-cost --offline --timezone <CLASSROOM_TIMEZONE> -
 
 with ccusage pinned to `20.0.20` and `CODEX_HOME` explicitly set. It normalizes `inputTokens`, `cacheReadTokens`, `outputTokens`, `reasoningOutputTokens`, and `totalTokens`. The server stores UTC receipt times and assigns day boundaries in the classroom timezone. A configurable difference above both `USAGE_MISMATCH_PERCENT` and `USAGE_MISMATCH_MIN_TOKENS` creates `USAGE_SOURCE_MISMATCH`; it is an anomaly, not an accusation.
 
+To bound database traffic, presence heartbeats still arrive every minute but only one history row is retained per ten-minute window. Integrity scans run every five minutes. Every signed route shares one short-lived `processed_events` receipt table instead of probing four event tables. The daily Vercel cron removes heartbeat and integrity rows older than 30 days and receipts older than 35 days; token usage and security events are retained.
+
 The dashboard provides Today, Yesterday, 7d, 30d, and custom ranges, input/cache/output/reasoning breakdowns, daily graph/table, class totals, health, integrity, and an audit timeline. A sticky quota taskbar and per-device progress bars show the remaining percentage for every primary/secondary Codex limit window plus its reset time.
 
 ## Integrity detection
@@ -186,7 +189,7 @@ make test
 make release
 ```
 
-`make test` covers public self-registration and validation, Ed25519 mutation and replay, duplicate usage and absolute snapshot update, OTel privacy filtering, source mismatch, ONLINE/LATE/UNREACHABLE, FIFO offline replay, log mutation/move cases, integrity-chain rollback/reset/break detection, Windows posture alerts, watchdog events, and installer static checks. CI also runs Go tests and parses both PowerShell installers on Windows. `make release` creates local artifacts in `dist/`; `make vercel-release` creates the same release under `public/` for Vercel CDN delivery.
+`make test` covers public self-registration and validation, Ed25519 mutation and replay, shared idempotency receipts, sampled heartbeat history, telemetry retention, database migration, duplicate usage and absolute snapshot update, OTel privacy filtering, source mismatch, ONLINE/LATE/UNREACHABLE, FIFO offline replay, log mutation/move cases, integrity-chain rollback/reset/break detection, Windows posture alerts, watchdog events, and installer static checks. CI also runs Go tests and parses both PowerShell installers on Windows. `make release` creates local artifacts in `dist/`; `make vercel-release` creates the same release under `public/` for Vercel CDN delivery.
 
 API endpoints are versioned: `/api/v1/register`, `/api/v1/heartbeat`, `/api/v1/usage`, `/api/v1/integrity`, and `/api/v1/events`. The server deliberately has no raw OTLP ingestion endpoint: Codex exports only to the agent's loopback collector, which filters events before signing normalized counters for the API.
 

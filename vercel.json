@@ -6,6 +6,12 @@
       "excludeFiles": "{agent/**,deploy/**,docs/**,installer/**,scripts/**,server/tests/**,tests/**,dist/**}"
     }
   },
+  "crons": [
+    {
+      "path": "/api/v1/cron/reconcile",
+      "schedule": "17 18 * * *"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
