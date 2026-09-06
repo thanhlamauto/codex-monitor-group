@@ -1,0 +1,13 @@
+.env
+.env*
+!.env.example
+dist/
+__pycache__/
+*.py[cod]
+*.db
+.pytest_cache/
+.vercel/
+.env.local
+.vercel-runtime-secrets
+.agents/
+skills-lock.json

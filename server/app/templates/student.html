@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="heading">
+  <div><p class="eyebrow">Chi tiết sử dụng</p><h1>{{ student.name }}</h1><p>{{ device.label if device else student.device_label }} · <span class="pill {{ state|lower }}">{{ state }}</span></p></div>
+  <form method="get"><div class="quick"><a href="?start={{ today }}&end={{ today }}">Today</a><a href="?start={{ today|dayminus(1) }}&end={{ today|dayminus(1) }}">Yesterday</a><a href="?start={{ today|dayminus(6) }}&end={{ today }}">7d</a><a href="?start={{ today|dayminus(29) }}&end={{ today }}">30d</a></div><input type="date" name="start" value="{{ start }}"><input type="date" name="end" value="{{ end }}"><button>Apply</button></form>
+</div>
+<section class="card quota-detail">
+  <div><p class="eyebrow">Gói Codex</p><h2>{{ quota.plan_type|upper if quota and quota.plan_type else 'Quota hiện tại' }}</h2><p class="muted">{% if quota %}Cập nhật {{ quota.observed_at }}{% else %}Đang chờ heartbeat có dữ liệu quota từ Codex.{% endif %}</p></div>
+  <div class="quota-detail-windows">{% for window in quota_windows %}<div class="quota-detail-window"><div><span>Giới hạn {{ window.label }}</span><strong>{{ window.remaining|round|int }}% còn lại</strong></div><div class="quota-track quota-track-wide"><i class="quota-{{ window.tone }}" style="width:{{ window.remaining }}%"></i></div><small>Đã dùng {{ window.used|round|int }}% · Reset {{ window.resets_at or 'không rõ' }}</small></div>{% else %}<span class="muted">Chưa có dữ liệu.</span>{% endfor %}</div>
+</section>
+<div class="stats five"><div class="card"><span>Input</span><strong>{{ totals.input|tokens }}</strong></div><div class="card"><span>Cached input</span><strong>{{ totals.cached|tokens }}</strong></div><div class="card"><span>Output</span><strong>{{ totals.output|tokens }}</strong></div><div class="card"><span>Reasoning</span><strong>{{ totals.reasoning|tokens }}</strong></div><div class="card"><span>Total</span><strong>{{ totals.total|tokens }}</strong></div></div>
+{% if device %}<div class="two-col">
+  <section class="card"><h2>Device health</h2><dl><dt>Agent</dt><dd>{{ device.agent_version or 'Unknown' }}{% if device.agent_version and device.agent_version != current_version %} · Update available{% endif %}</dd><dt>Codex</dt><dd>{{ device.codex_version or 'Unknown' }}</dd><dt>ccusage</dt><dd>{{ device.ccusage_version or 'Unknown' }}</dd><dt>Last heartbeat</dt><dd>{{ device.last_seen or 'Never' }}</dd><dt>Last OTel event</dt><dd>{{ device.last_otlp_at or 'Never' }}</dd><dt>Last local reconciliation</dt><dd>{{ device.last_local_usage_at or 'Never' }}</dd></dl></section>
+  <section class="card"><h2>Integrity</h2><dl>{% for name,status in integrity_status.items() %}<dt>{{ name }}</dt><dd><span class="pill {{ 'ok' if status == 'OK' else 'tamper' }}">{{ status }}</span></dd>{% endfor %}</dl></section>
+</div>{% endif %}
+<section class="card"><h2>Daily token usage</h2>
+  <div class="chart">{% for d in daily %}<div class="chart-row"><time>{{ d.date }}</time><div><span style="width:{{ (d.total * 100 / max_daily)|round }}%"></span></div><strong>{{ d.total|tokens }}</strong></div>{% endfor %}</div>
+  <table><thead><tr><th>Date</th><th>Input</th><th>Cached</th><th>Output</th><th>Reasoning</th><th>Total</th></tr></thead><tbody>{% for d in daily %}<tr><td>{{ d.date }}</td><td>{{ d.input|tokens }}</td><td>{{ d.cached|tokens }}</td><td>{{ d.output|tokens }}</td><td>{{ d.reasoning|tokens }}</td><td>{{ d.total|tokens }}</td></tr>{% else %}<tr><td colspan="6" class="empty">No usage in this range.</td></tr>{% endfor %}</tbody></table>
+</section>
+<section class="card"><h2>Integrity & audit timeline</h2><div class="timeline">{% for e in events %}<article><span class="dot {{ e.severity|lower }}"></span><div><strong>{{ e.event_type }}</strong><time>{{ e.created_at }}</time><pre>{{ e.details_json|tojson(indent=2) }}</pre></div>{% if e.acknowledged_at %}<span class="muted">Acknowledged</span>{% endif %}</article>{% else %}<p class="empty">No integrity events.</p>{% endfor %}</div></section>
+{% endblock %}

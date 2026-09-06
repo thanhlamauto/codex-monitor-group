@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="heading">
+  <div><p class="eyebrow">Theo dõi minh bạch</p><h1>Mức sử dụng Codex của mọi người</h1><p>Múi giờ: {{ timezone }} · Không cần tài khoản để xem.</p></div>
+</div>
+<aside class="quota-taskbar">
+  <div><span>Quota còn lại thấp nhất</span><strong>{% if quota_min is not none %}{{ quota_min|round|int }}%{% else %}Chưa có dữ liệu{% endif %}</strong></div>
+  <div class="quota-track quota-track-wide"><i class="{% if quota_min is none or quota_min > 50 %}quota-good{% elif quota_min > 20 %}quota-warn{% else %}quota-low{% endif %}" style="width:{{ quota_min if quota_min is not none else 0 }}%"></i></div>
+  <span class="muted">{{ quota_devices }}/{{ rows|length }} máy đã báo quota</span>
+</aside>
+<section class="card join-card">
+  <div><h2>Thêm máy của bạn</h2><p>Chạy một lệnh trên Linux hoặc macOS. Bộ cài sẽ hỏi tên hiển thị, tự nhận diện tên máy và đưa máy lên bảng này.</p></div>
+  <div class="install-command"><code id="install-command">{{ install_command }}</code><button type="button" onclick="navigator.clipboard.writeText(document.getElementById('install-command').innerText);this.textContent='Đã sao chép'">Sao chép</button></div>
+</section>
+<div class="stats"><div class="card"><span>Hôm nay</span><strong>{{ class_today|tokens }}</strong></div><div class="card"><span>7 ngày qua</span><strong>{{ class_week|tokens }}</strong></div><div class="card"><span>Máy tham gia</span><strong>{{ rows|length }}</strong></div></div>
+{% if top_students %}<p class="muted">Top 7 ngày: {% for row in top_students %}{{ row.student.name }} ({{ row.week|tokens }}){% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+<div class="table card"><table><thead><tr><th>Người dùng</th><th>Máy</th><th>Quota còn lại</th><th>Hôm nay</th><th>7 ngày</th><th>Lần cuối</th><th>Agent</th><th>Telemetry</th><th>Logs</th><th>Toàn vẹn</th></tr></thead><tbody>{% for row in rows %}<tr><td><a href="/students/{{ row.student.id }}">{{ row.student.name }}</a></td><td>{{ row.device.label if row.device else row.student.device_label }}</td><td class="quota-cell">{% if row.quota_windows %}<small>{{ row.quota.plan_type|upper if row.quota.plan_type else 'CODEX' }}</small>{% for window in row.quota_windows %}<div class="quota-line" title="Reset: {{ window.resets_at or 'không rõ' }}"><span>{{ window.label }}</span><div class="quota-track"><i class="quota-{{ window.tone }}" style="width:{{ window.remaining }}%"></i></div><strong>{{ window.remaining|round|int }}%</strong></div>{% endfor %}{% else %}<span class="muted">Chờ heartbeat</span>{% endif %}</td><td>{{ row.today|tokens }}</td><td>{{ row.week|tokens }}</td><td>{{ row.device.last_seen|ago if row.device and row.device.last_seen else 'Chưa có' }}</td><td><span class="pill {{ row.state|lower }}">{{ row.state }}</span></td><td>{{ row.telemetry }}</td><td>{{ row.logs }}</td><td><span class="pill {{ row.integrity|lower }}">{{ row.integrity }}</span></td></tr>{% else %}<tr><td colspan="10" class="empty">Chưa có máy nào. Hãy chạy lệnh cài đặt phía trên để trở thành người đầu tiên.</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}
