@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(title="Codex Classroom Monitor", version="1.3.1", lifespan=lifespan)
+app = FastAPI(title="Codex Classroom Monitor", version="1.3.2", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 

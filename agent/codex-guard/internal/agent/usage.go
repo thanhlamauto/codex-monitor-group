@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"runtime"
 	"time"
 )
 
@@ -56,10 +55,8 @@ func CollectUsage(ccusagePath, codexHome, timezone string, now time.Time, retent
 }
 
 func (a *Client) Usage() error {
-	if runtime.GOOS == "windows" {
-		if err := a.refreshCodexHome(); err != nil {
-			return err
-		}
+	if err := a.refreshCodexHome(); err != nil {
+		return err
 	}
 	days, err := CollectUsage(a.Config.CCUsagePath, a.Config.CodexHome, a.Config.Timezone, time.Now(), a.Config.RetentionDays)
 	if err != nil {
