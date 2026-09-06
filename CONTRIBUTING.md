@@ -18,14 +18,14 @@ Contributions are welcome from everyone. You do not need to be a repository coll
 
 5. Open a pull request and complete the checklist in the template.
 
-GitHub Actions runs the server, Go agent, and installer checks for every pull request. Vercel creates a preview deployment when its Git integration is enabled. Changes reach production only after review, passing checks, and merge to `main`.
+GitHub Actions runs the server, Go agent, and installer checks for every pull request. Vercel creates a preview deployment when its Git integration is enabled. Changes reach production only after passing the required checks and merging to `main`.
 
 ## Fair review policy
 
 - The repository owner and collaborators follow the same protected-branch rules.
 - Changes are merged through pull requests; direct pushes to `main` are disabled.
-- At least one approving review is required.
-- Stale approvals are dismissed when new commits materially change a pull request.
+- Approving reviews are welcome but not required. GitHub does not allow an author to formally approve their own pull request, so a collaborator may merge their own pull request after every required check passes.
+- If a review is added, it becomes stale when new commits materially change the pull request.
 - Review conversations must be resolved before merge.
 - Review the code, privacy impact, integrity behavior, and tests rather than the contributor's identity.
 

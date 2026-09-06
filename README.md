@@ -228,6 +228,6 @@ Known MVP limitations: macOS/Linux use a root-owned `0600` key file rather than 
 
 ## Contributing
 
-The project is public and accepts pull requests from everyone. See [CONTRIBUTING.md](CONTRIBUTING.md) for the local test workflow, privacy rules, and fair-review policy. The protected `main` branch requires review and passing CI for owner and collaborators alike.
+The project is public and accepts pull requests from everyone. See [CONTRIBUTING.md](CONTRIBUTING.md) for the local test workflow, privacy rules, and fair-review policy. The protected `main` branch requires a pull request and passing CI for owner and collaborators alike; collaborators may merge their own pull requests once those checks pass.
 
 See [architecture](docs/architecture.md), [privacy](docs/privacy.md), [protocol](docs/protocol.md), and [operations](docs/operations.md).
