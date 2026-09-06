@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/codex-classroom-monitor/agent/codex-guard/internal/config"
-	queuepkg "github.com/example/codex-classroom-monitor/agent/codex-guard/internal/queue"
+	"github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/config"
+	queuepkg "github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/queue"
 )
 
 type flakyTransport struct {

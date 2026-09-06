@@ -43,3 +43,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sh tests/test_installer.sh
+
+  windows-tests:
+    name: Windows agent and installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/codex-guard/go.mod
+          cache-dependency-path: agent/codex-guard/go.sum
+      - run: go test ./...
+        working-directory: agent/codex-guard
+      - name: Parse PowerShell installers
+        shell: pwsh
+        run: |
+          $allErrors = @()
+          foreach ($script in @("installer/install.ps1", "installer/uninstall.ps1")) {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script), [ref]$tokens, [ref]$parseErrors) > $null
+            $allErrors += $parseErrors
+          }
+          if ($allErrors.Count) { $allErrors | Format-List | Out-String | Write-Error; exit 1 }

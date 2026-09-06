@@ -9,8 +9,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+
+	"github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/atomicfile"
+	"github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/protocol"
 )
 
 type checkpoint struct {
@@ -23,7 +27,10 @@ type checkpoint struct {
 	MtimeUnix    int64  `json:"mtime_unix"`
 }
 type integrityState struct {
-	Files map[string]checkpoint `json:"files"`
+	StateID          string                `json:"state_id"`
+	ScanSequence     uint64                `json:"scan_sequence"`
+	LastSnapshotHash string                `json:"last_snapshot_hash"`
+	Files            map[string]checkpoint `json:"files"`
 }
 type Finding struct {
 	EventType    string `json:"event_type"`
@@ -42,10 +49,15 @@ type FileMetadata struct {
 	MtimeUnix    int64  `json:"mtime_unix"`
 }
 type IntegrityPayload struct {
-	FilesChecked int            `json:"files_checked"`
-	Status       string         `json:"status"`
-	Findings     []Finding      `json:"findings"`
-	FileMetadata []FileMetadata `json:"file_metadata"`
+	FilesChecked         int             `json:"files_checked"`
+	Status               string          `json:"status"`
+	Findings             []Finding       `json:"findings"`
+	FileMetadata         []FileMetadata  `json:"file_metadata"`
+	StateID              string          `json:"state_id"`
+	ScanSequence         uint64          `json:"scan_sequence"`
+	PreviousSnapshotHash string          `json:"previous_snapshot_hash,omitempty"`
+	SnapshotHash         string          `json:"snapshot_hash"`
+	MonitorPosture       *MonitorPosture `json:"monitor_posture,omitempty"`
 }
 
 func hashPrefix(path string, size int64) (string, error) {
@@ -69,7 +81,7 @@ func opaqueID() string { b := make([]byte, 16); _, _ = rand.Read(b); return hex.
 func loadIntegrityState(path string) (integrityState, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return integrityState{Files: map[string]checkpoint{}}, nil
+		return integrityState{StateID: opaqueID(), Files: map[string]checkpoint{}}, nil
 	}
 	if err != nil {
 		return integrityState{}, err
@@ -80,6 +92,9 @@ func loadIntegrityState(path string) (integrityState, error) {
 	}
 	if state.Files == nil {
 		state.Files = map[string]checkpoint{}
+	}
+	if state.StateID == "" {
+		state.StateID = opaqueID()
 	}
 	return state, nil
 }
@@ -95,7 +110,7 @@ func saveIntegrityState(path string, state integrityState) error {
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return atomicfile.Replace(tmp, path)
 }
 
 func discoverLogs(codexHome string) (map[string]string, map[string]bool, error) {
@@ -236,9 +251,6 @@ func ScanIntegrity(codexHome, statePath string) (IntegrityPayload, error) {
 		old := previous.Size
 		findings = append(findings, Finding{EventType: "LOG_DELETED", Severity: "CRITICAL", OpaqueFileID: previous.OpaqueFileID, OldSize: &old})
 	}
-	if err := saveIntegrityState(statePath, integrityState{Files: next}); err != nil {
-		return IntegrityPayload{}, err
-	}
 	metadata := make([]FileMetadata, 0, len(next))
 	for _, cp := range next {
 		metadata = append(metadata, FileMetadata{OpaqueFileID: cp.OpaqueFileID, Size: cp.Size, PrefixSize: cp.Size, PrefixSHA256: cp.PrefixSHA256, FullSHA256: cp.FullSHA256, Archived: cp.Archived, MtimeUnix: cp.MtimeUnix})
@@ -248,14 +260,38 @@ func ScanIntegrity(codexHome, statePath string) (IntegrityPayload, error) {
 	if len(findings) > 0 {
 		status = "TAMPER"
 	}
-	return IntegrityPayload{FilesChecked: len(next), Status: status, Findings: findings, FileMetadata: metadata}, nil
+	sequence := state.ScanSequence + 1
+	chainInput := struct {
+		StateID      string         `json:"state_id"`
+		Sequence     uint64         `json:"sequence"`
+		PreviousHash string         `json:"previous_hash"`
+		Files        []FileMetadata `json:"files"`
+		Findings     []Finding      `json:"findings"`
+	}{StateID: state.StateID, Sequence: sequence, PreviousHash: state.LastSnapshotHash, Files: metadata, Findings: findings}
+	encoded, err := protocol.CanonicalJSON(chainInput)
+	if err != nil {
+		return IntegrityPayload{}, err
+	}
+	sum := sha256.Sum256(encoded)
+	snapshotHash := hex.EncodeToString(sum[:])
+	if err := saveIntegrityState(statePath, integrityState{StateID: state.StateID, ScanSequence: sequence, LastSnapshotHash: snapshotHash, Files: next}); err != nil {
+		return IntegrityPayload{}, err
+	}
+	return IntegrityPayload{FilesChecked: len(next), Status: status, Findings: findings, FileMetadata: metadata, StateID: state.StateID, ScanSequence: sequence, PreviousSnapshotHash: state.LastSnapshotHash, SnapshotHash: snapshotHash}, nil
 }
 
 func (a *Client) Integrity() error {
+	if runtime.GOOS == "windows" {
+		if err := a.refreshCodexHome(); err != nil {
+			return err
+		}
+	}
 	payload, err := ScanIntegrity(a.Config.CodexHome, filepath.Join(a.Config.StateDir, "integrity.json"))
 	if err != nil {
 		return err
 	}
+	posture := a.MonitorPosture()
+	payload.MonitorPosture = &posture
 	if err := a.enqueue("/api/v1/integrity", payload); err != nil {
 		return err
 	}

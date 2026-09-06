@@ -47,6 +47,42 @@ func TestAppendValid(t *testing.T) {
 		t.Fatal(p.Findings)
 	}
 }
+
+func TestIntegrityCheckpointChainAdvances(t *testing.T) {
+	home, state, _ := setupLog(t)
+	first, err := ScanIntegrity(home, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := ScanIntegrity(home, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.StateID != second.StateID || second.ScanSequence != first.ScanSequence+1 {
+		t.Fatalf("chain did not advance: %#v %#v", first, second)
+	}
+	if second.PreviousSnapshotHash != first.SnapshotHash || len(second.SnapshotHash) != 64 {
+		t.Fatal("snapshot hash chain is broken")
+	}
+}
+
+func TestIntegrityStateDeletionCreatesNewIdentity(t *testing.T) {
+	home, state, _ := setupLog(t)
+	before, err := ScanIntegrity(home, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(state); err != nil {
+		t.Fatal(err)
+	}
+	after, err := ScanIntegrity(home, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.StateID == after.StateID || after.ScanSequence != 1 {
+		t.Fatal("state reset was not made remotely detectable")
+	}
+}
 func TestPrefixModified(t *testing.T) {
 	home, state, file := setupLog(t)
 	if err := os.WriteFile(file, []byte("XXX\ntwo\nmore\n"), 0600); err != nil {

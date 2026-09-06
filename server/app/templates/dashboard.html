@@ -9,8 +9,8 @@
   <span class="muted">{{ quota_devices }}/{{ rows|length }} máy đã báo quota</span>
 </aside>
 <section class="card join-card">
-  <div><h2>Thêm máy của bạn</h2><p>Chạy một lệnh trên Linux hoặc macOS. Bộ cài sẽ hỏi tên hiển thị, tự nhận diện tên máy và đưa máy lên bảng này.</p></div>
-  <div class="install-command"><code id="install-command">{{ install_command }}</code><button type="button" onclick="navigator.clipboard.writeText(document.getElementById('install-command').innerText);this.textContent='Đã sao chép'">Sao chép</button></div>
+  <div><h2>Thêm máy của bạn</h2><p>Bộ cài sẽ hỏi tên hiển thị, tự nhận diện máy và đưa máy lên bảng. Windows: mở PowerShell bằng Run as Administrator.</p></div>
+  <div class="install-options"><label>Linux / macOS</label><div class="install-command"><code id="install-command">{{ install_command }}</code><button type="button" onclick="navigator.clipboard.writeText(document.getElementById('install-command').innerText);this.textContent='Đã sao chép'">Sao chép</button></div><label>Windows PowerShell (Admin)</label><div class="install-command"><code id="windows-install-command">{{ windows_install_command }}</code><button type="button" onclick="navigator.clipboard.writeText(document.getElementById('windows-install-command').innerText);this.textContent='Đã sao chép'">Sao chép</button></div></div>
 </section>
 <div class="stats"><div class="card"><span>Hôm nay</span><strong>{{ class_today|tokens }}</strong></div><div class="card"><span>7 ngày qua</span><strong>{{ class_week|tokens }}</strong></div><div class="card"><span>Máy tham gia</span><strong>{{ rows|length }}</strong></div></div>
 {% if top_students %}<p class="muted">Top 7 ngày: {% for row in top_students %}{{ row.student.name }} ({{ row.week|tokens }}){% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}

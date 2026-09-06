@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/example/codex-classroom-monitor/agent/codex-guard/internal/config"
+	"github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/config"
 )
 
 func TestOTelCollectorFiltersPrivateFields(t *testing.T) {

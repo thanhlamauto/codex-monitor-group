@@ -17,6 +17,8 @@ fetch_one() {
     linux-arm64) package_platform="linux-arm64" ;;
     darwin-amd64) package_platform="darwin-x64" ;;
     darwin-arm64) package_platform="darwin-arm64" ;;
+    windows-amd64) package_platform="win32-x64" ;;
+    windows-arm64) package_platform="win32-arm64" ;;
     *) echo "unsupported platform: $platform" >&2; exit 1 ;;
   esac
   url="https://registry.npmjs.org/@ccusage/ccusage-${package_platform}/-/ccusage-${package_platform}-${VERSION}.tgz"
@@ -30,7 +32,11 @@ fetch_one() {
     exit 1
   fi
   tar -xzf "$archive" -C "$extract"
-  install -m 0755 "$extract/package/bin/ccusage" "$OUTPUT/ccusage-${platform}"
+  if [ "${platform#windows-}" != "$platform" ]; then
+    install -m 0755 "$extract/package/bin/ccusage.exe" "$OUTPUT/ccusage-${platform}.exe"
+  else
+    install -m 0755 "$extract/package/bin/ccusage" "$OUTPUT/ccusage-${platform}"
+  fi
   rm -f "$archive"
   rm -rf "$extract"
   trap - EXIT INT TERM
@@ -40,3 +46,5 @@ fetch_one linux-amd64 "819aca18837f85a596c330ac8c8dbeee750ae44af330475ae82b74b8b
 fetch_one linux-arm64 "f7f9e5ba90f15bfd1db020e5a76660c3d91e67e1ffc0ec6801eaa900622be6b7"
 fetch_one darwin-amd64 "be8e268364c5d4a7d695c3c4e906e27bc433d8c7b0bda742396975a9ccb5a5fd"
 fetch_one darwin-arm64 "ad27629a45e0a3e45eb167080db0aad7545080134da6849b6ea774b3ed6899e1"
+fetch_one windows-amd64 "3f3f32546ac5a9a53dadcefc552411c0536166aab16cd9b9db14e26fd8b4413c"
+fetch_one windows-arm64 "9a6e2d66c3d00363274ac1fc8fe57904f89a46216d3cf0b44468856ef692a3ee"

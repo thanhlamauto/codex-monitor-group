@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import asyncio
+import hashlib
 import json
 import secrets
 import time
@@ -20,7 +21,7 @@ from .config import settings
 from .db import SessionLocal, ensure_schema, get_db
 from .models import Device, Heartbeat, IntegritySnapshot, QuotaSnapshot, SecurityEvent, Student, UsageReport, utcnow
 from .schemas import EnrollRequest, IntegrityPayload, QuotaPayload, SignedEnvelope, UsagePayload
-from .security import hash_secret, parse_client_timestamp, signature_message, verify_signature
+from .security import canonical_payload, hash_secret, parse_client_timestamp, signature_message, verify_signature
 from .services import add_security_event, artifact_hashes, classroom_today, device_state, maybe_usage_mismatch, reconcile_unreachable, usage_totals
 
 
@@ -112,7 +113,7 @@ async def lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(title="Codex Classroom Monitor", version="1.2.0", lifespan=lifespan)
+app = FastAPI(title="Codex Classroom Monitor", version="1.3.1", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
@@ -176,7 +177,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             "week": usage_totals(db, student.id, today - timedelta(days=6), today)["total"],
             "alerts": open_alerts, "integrity": integrity,
             "telemetry": "OK" if device and device.last_otlp_at and state != "UNREACHABLE" else "MISSING",
-            "logs": "OK" if device and device.last_local_usage_at and state != "UNREACHABLE" else "UNKNOWN",
+            "logs": "OK" if latest_integrity and latest_integrity.files_checked > 0 and state != "UNREACHABLE" else "MISSING",
             "quota": quota, "quota_windows": quota_windows(quota),
         })
     class_today = sum(row["today"] for row in rows)
@@ -186,7 +187,8 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     quota_min = min(quota_values) if quota_values else None
     quota_devices = sum(bool(row["quota_windows"]) for row in rows)
     install_command = f"curl -fsSL {settings.public_base_url}/install.sh | sudo sh"
-    return templates.TemplateResponse(request, "dashboard.html", {"rows": rows, "top_students": top_students, "class_today": class_today, "class_week": class_week, "timezone": settings.classroom_timezone, "install_command": install_command, "quota_min": quota_min, "quota_devices": quota_devices})
+    windows_install_command = f"irm {settings.public_base_url}/install.ps1 | iex"
+    return templates.TemplateResponse(request, "dashboard.html", {"rows": rows, "top_students": top_students, "class_today": class_today, "class_week": class_week, "timezone": settings.classroom_timezone, "install_command": install_command, "windows_install_command": windows_install_command, "quota_min": quota_min, "quota_devices": quota_devices})
 
 
 @app.get("/students/{student_id}", response_class=HTMLResponse)
@@ -208,11 +210,14 @@ def student_detail(student_id: str, request: Request, db: Session = Depends(get_
     latest_integrity = db.scalar(select(IntegritySnapshot).where(IntegritySnapshot.device_id == device.id).order_by(IntegritySnapshot.created_at.desc())) if device else None
     quota = db.get(QuotaSnapshot, device.id) if device else None
     default_integrity = "OK" if latest_integrity and state != "UNREACHABLE" else "UNKNOWN"
+    session_logs_status = "TAMPER" if alert_types.intersection({"LOG_PREFIX_MODIFIED", "LOG_TRUNCATED", "LOG_DELETED", "ARCHIVED_LOG_MODIFIED"}) else ("OK" if latest_integrity and latest_integrity.files_checked > 0 and state != "UNREACHABLE" else "MISSING")
     integrity_status = {
         "Agent binary": "TAMPER" if "AGENT_BINARY_MODIFIED" in alert_types else default_integrity,
         "ccusage": "TAMPER" if "CCUSAGE_BINARY_MODIFIED" in alert_types else default_integrity,
         "Codex config": "TAMPER" if "TELEMETRY_CONFIG_CHANGED" in alert_types or "CODEX_HOME_CHANGED" in alert_types else default_integrity,
-        "Session logs": "TAMPER" if alert_types.intersection({"LOG_PREFIX_MODIFIED", "LOG_TRUNCATED", "LOG_DELETED", "ARCHIVED_LOG_MODIFIED"}) else default_integrity,
+        "Session logs": session_logs_status,
+        "Monitor service": "TAMPER" if alert_types.intersection({"SERVICE_STOPPED_OR_MODIFIED", "SERVICE_RESTART_FAILED", "SERVICE_CONFIGURATION_CHANGED", "SERVICE_AUTOSTART_DISABLED", "SERVICE_RECOVERY_DISABLED", "WATCHDOG_DISABLED"}) else default_integrity,
+        "Local protection": "TAMPER" if alert_types.intersection({"AGENT_PERMISSIONS_WEAKENED", "CONFIG_PERMISSIONS_WEAKENED", "KEY_PROTECTION_WEAK", "INTEGRITY_STATE_RESET", "INTEGRITY_STATE_ROLLBACK", "INTEGRITY_CHAIN_BROKEN", "INTEGRITY_SNAPSHOT_HASH_INVALID"}) else default_integrity,
     }
     return templates.TemplateResponse(request, "student.html", {"student": student, "device": device, "state": state, "totals": usage_totals(db, student.id, start, end), "daily": daily, "max_daily": max_daily, "integrity_status": integrity_status, "events": events, "start": start, "end": end, "today": today, "current_version": app.version, "quota": quota, "quota_windows": quota_windows(quota)})
 
@@ -276,7 +281,7 @@ def heartbeat(envelope: SignedEnvelope, db: Session = Depends(get_db)):
     device.ccusage_sha256 = str(p["ccusage_sha256"])[:64].lower()
     device.codex_version = str(p.get("codex_version", ""))[:64]
     codex_home = str(p["codex_home"])[:64]
-    if device.codex_home_id and device.codex_home_id != codex_home:
+    if device.codex_home_id and device.codex_home_id != codex_home and p.get("codex_home_auto_discovered") is not True:
         add_security_event(db, device, "CODEX_HOME_CHANGED", f"codex-home:{envelope.event_id}", {"previous": device.codex_home_id, "current": codex_home})
     device.codex_home_id = codex_home
     config_fp = str(p.get("config_fingerprint", ""))[:64]
@@ -339,10 +344,11 @@ def usage(envelope: SignedEnvelope, db: Session = Depends(get_db)):
         report.output_tokens = day.output_tokens
         report.reasoning_output_tokens = day.reasoning_output_tokens
         report.total_tokens = day.total_tokens
-    if payload.source == "local":
-        device.last_local_usage_at = utcnow()
-    else:
-        device.last_otlp_at = utcnow()
+    if payload.days:
+        if payload.source == "local":
+            device.last_local_usage_at = utcnow()
+        else:
+            device.last_otlp_at = utcnow()
     db.commit()
     for day in payload.days:
         maybe_usage_mismatch(db, device, date.fromisoformat(day.date))
@@ -359,7 +365,63 @@ def integrity(envelope: SignedEnvelope, db: Session = Depends(get_db)):
         payload = IntegrityPayload.model_validate(envelope.payload)
     except ValidationError as exc:
         raise HTTPException(422, json.loads(exc.json())) from exc
-    db.add(IntegritySnapshot(device_id=device.id, event_id=envelope.event_id, files_checked=payload.files_checked, status=payload.status, metadata_json={"files": [row.model_dump() for row in payload.file_metadata]}))
+    previous = db.scalar(select(IntegritySnapshot).where(IntegritySnapshot.device_id == device.id).order_by(IntegritySnapshot.created_at.desc()))
+    previous_metadata = previous.metadata_json if previous and isinstance(previous.metadata_json, dict) else {}
+    previous_state_id = previous_metadata.get("state_id")
+    previous_sequence = previous_metadata.get("scan_sequence")
+    previous_hash = previous_metadata.get("snapshot_hash")
+    validated_snapshot_hash = payload.snapshot_hash
+    if payload.state_id and payload.scan_sequence and payload.snapshot_hash:
+        chain_document = {
+            "state_id": payload.state_id,
+            "sequence": payload.scan_sequence,
+            "previous_hash": payload.previous_snapshot_hash or "",
+            "files": [row.model_dump(exclude_none=True) for row in payload.file_metadata],
+            "findings": [row.model_dump(exclude_none=True) for row in payload.findings],
+        }
+        calculated_snapshot_hash = hashlib.sha256(canonical_payload(chain_document)).hexdigest()
+        validated_snapshot_hash = calculated_snapshot_hash
+        if calculated_snapshot_hash != payload.snapshot_hash:
+            add_security_event(db, device, "INTEGRITY_SNAPSHOT_HASH_INVALID", f"state-hash:{envelope.event_id}", {"reported_snapshot_hash": payload.snapshot_hash, "calculated_snapshot_hash": calculated_snapshot_hash})
+        if previous_state_id and previous_state_id != payload.state_id:
+            add_security_event(db, device, "INTEGRITY_STATE_RESET", f"state-reset:{payload.state_id}", {"previous_state_id": previous_state_id, "current_state_id": payload.state_id})
+        elif previous_sequence is not None and payload.scan_sequence <= int(previous_sequence):
+            add_security_event(db, device, "INTEGRITY_STATE_ROLLBACK", f"state-rollback:{payload.state_id}:{payload.scan_sequence}", {"previous_sequence": previous_sequence, "current_sequence": payload.scan_sequence})
+        elif previous_hash and payload.previous_snapshot_hash != previous_hash:
+            add_security_event(db, device, "INTEGRITY_CHAIN_BROKEN", f"state-chain:{payload.snapshot_hash}", {"expected_previous_hash": previous_hash, "reported_previous_hash": payload.previous_snapshot_hash})
+    posture_dict = payload.monitor_posture.model_dump() if payload.monitor_posture else None
+    previous_posture = previous_metadata.get("monitor_posture") if isinstance(previous_metadata.get("monitor_posture"), dict) else {}
+    if posture_dict:
+        fingerprint = posture_dict["service_fingerprint"]
+        previous_fingerprint = previous_posture.get("service_fingerprint")
+        if previous_fingerprint and previous_fingerprint != fingerprint:
+            add_security_event(db, device, "SERVICE_CONFIGURATION_CHANGED", f"service-config:{fingerprint}", {"previous_fingerprint": previous_fingerprint, "current_fingerprint": fingerprint})
+        posture_checks = {
+            "service_installed": "SERVICE_STOPPED_OR_MODIFIED",
+            "service_running": "SERVICE_STOPPED_OR_MODIFIED",
+            "auto_start_ok": "SERVICE_AUTOSTART_DISABLED",
+            "restart_policy_ok": "SERVICE_RECOVERY_DISABLED",
+            "agent_permissions_ok": "AGENT_PERMISSIONS_WEAKENED",
+            "config_permissions_ok": "CONFIG_PERMISSIONS_WEAKENED",
+        }
+        if posture_dict["watchdog_expected"]:
+            posture_checks["watchdog_ok"] = "WATCHDOG_DISABLED"
+        for field, event_type in posture_checks.items():
+            if not posture_dict[field]:
+                add_security_event(db, device, event_type, f"posture:{event_type}:{field}:{fingerprint}", {"failed_check": field, "service_manager": posture_dict["service_manager"]})
+        expected_key_protection = "windows-dpapi-machine" if posture_dict["os"] == "windows" else "root-owned-file"
+        if posture_dict["key_protection"] != expected_key_protection:
+            add_security_event(db, device, "KEY_PROTECTION_WEAK", f"key-protection:{posture_dict['key_protection']}", {"expected": expected_key_protection, "reported": posture_dict["key_protection"]})
+    metadata = {
+        "files": [row.model_dump() for row in payload.file_metadata],
+        "state_id": payload.state_id,
+        "scan_sequence": payload.scan_sequence,
+        "previous_snapshot_hash": payload.previous_snapshot_hash,
+        "snapshot_hash": validated_snapshot_hash,
+        "reported_snapshot_hash": payload.snapshot_hash,
+        "monitor_posture": posture_dict,
+    }
+    db.add(IntegritySnapshot(device_id=device.id, event_id=envelope.event_id, files_checked=payload.files_checked, status=payload.status, metadata_json=metadata))
     for index, finding in enumerate(payload.findings):
         details = {k: v for k, v in finding.model_dump().items() if k not in {"event_type", "severity"} and v is not None}
         add_security_event(db, device, finding.event_type, f"integrity:{envelope.event_id}:{index}", details, finding.severity)
@@ -373,9 +435,12 @@ def events(envelope: SignedEnvelope, db: Session = Depends(get_db)):
     if duplicate:
         return {"accepted": True, "duplicate": True}
     kind = str(envelope.payload.get("event_type", ""))
-    if kind != "AGENT_UNINSTALL_REQUESTED":
+    if kind not in {"AGENT_UNINSTALL_REQUESTED", "SERVICE_STOPPED_OR_MODIFIED", "SERVICE_RESTART_FAILED"}:
         raise HTTPException(422, "unsupported event")
-    add_security_event(db, device, kind, f"agent-event:{envelope.event_id}", {})
+    details = envelope.payload.get("details", {})
+    if not isinstance(details, dict) or len(json.dumps(details)) > 4096:
+        raise HTTPException(422, "invalid event details")
+    add_security_event(db, device, kind, f"agent-event:{envelope.event_id}", details)
     device.last_sequence = envelope.sequence
     db.commit()
     return {"accepted": True, "duplicate": False}
@@ -387,6 +452,14 @@ def install_script():
     if not path.exists():
         raise HTTPException(503, "release artifacts not built")
     return FileResponse(path, media_type="text/x-shellscript")
+
+
+@app.get("/install.ps1")
+def install_powershell():
+    path = settings.artifacts_dir.parent / "install.ps1" if settings.serverless else settings.artifacts_dir / "install.ps1"
+    if not path.exists():
+        raise HTTPException(503, "release artifacts not built")
+    return FileResponse(path, media_type="text/plain")
 
 
 @app.get("/downloads/{filename}")

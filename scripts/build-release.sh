@@ -8,16 +8,22 @@ mkdir -p "$OUTPUT"
 
 build_agent() {
   os="$1" arch="$2"
-  (cd "$ROOT/agent/codex-guard" && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$OUTPUT/codex-guard-$os-$arch" ./cmd/codex-guard)
+  suffix=""
+  if [ "$os" = windows ]; then suffix=".exe"; fi
+  (cd "$ROOT/agent/codex-guard" && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$OUTPUT/codex-guard-$os-$arch$suffix" ./cmd/codex-guard)
 }
 
 build_agent linux amd64
 build_agent linux arm64
 build_agent darwin amd64
 build_agent darwin arm64
+build_agent windows amd64
+build_agent windows arm64
 "$ROOT/scripts/fetch-ccusage.sh" "$OUTPUT"
 install -m 0755 "$ROOT/installer/install.sh" "$OUTPUT/install.sh"
 install -m 0755 "$ROOT/installer/uninstall.sh" "$OUTPUT/uninstall.sh"
+install -m 0644 "$ROOT/installer/install.ps1" "$OUTPUT/install.ps1"
+install -m 0644 "$ROOT/installer/uninstall.ps1" "$OUTPUT/uninstall.ps1"
 if command -v sha256sum >/dev/null 2>&1; then
   (cd "$OUTPUT" && sha256sum codex-guard-* ccusage-* > checksums.txt)
 else

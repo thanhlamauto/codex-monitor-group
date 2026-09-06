@@ -87,6 +87,18 @@ for name in "codex-guard-$os-$arch" "ccusage-$os-$arch"; do
   [ "$actual" = "$expected" ] || { echo "Checksum verification failed for $name" >&2; exit 1; }
 done
 
+# Stop existing execution paths only after all replacement artifacts verify.
+# This prevents config/queue sequence races during an in-place update.
+if [ -s /etc/codex-guard/config.json ]; then
+  if [ "$os" = linux ]; then
+    systemctl disable --now codex-guard-watchdog.timer 2>/dev/null || true
+    systemctl stop codex-guard.service 2>/dev/null || true
+  else
+    launchctl bootout system/com.openai.codex-guard-watchdog 2>/dev/null || true
+    launchctl bootout system/com.openai.codex-guard 2>/dev/null || true
+  fi
+fi
+
 install -d -m 0755 /usr/local/lib/codex-guard /etc/codex-guard /var/lib/codex-guard
 install -m 0755 "$tmp/codex-guard-$os-$arch" /usr/local/bin/codex-guard
 install -m 0755 "$tmp/ccusage-$os-$arch" /usr/local/lib/codex-guard/ccusage
@@ -103,24 +115,30 @@ if [ -n "$student_user" ] && [ "$student_user" != "root" ]; then
   chmod 0600 "$CODEX_HOME_ARG/config.toml"
 fi
 
-heartbeat_status=connected
-if ! /usr/local/bin/codex-guard once --config /etc/codex-guard/config.json; then
-  heartbeat_status="queued for retry"
-  echo "Installed, but the initial server check is queued for retry." >&2
-fi
-
 if [ "$os" = linux ]; then
   install -m 0644 /dev/null /etc/systemd/system/codex-guard.service
-  printf '%s\n' '[Unit]' 'Description=Codex Classroom Monitor Agent' 'After=network-online.target' 'Wants=network-online.target' '' '[Service]' 'Type=simple' 'ExecStart=/usr/local/bin/codex-guard run --config /etc/codex-guard/config.json' 'Restart=always' 'RestartSec=5' 'NoNewPrivileges=true' 'PrivateTmp=true' 'ProtectSystem=strict' 'ReadWritePaths=/var/lib/codex-guard /etc/codex-guard' "ReadOnlyPaths=$CODEX_HOME_ARG" '' '[Install]' 'WantedBy=multi-user.target' > /etc/systemd/system/codex-guard.service
+  printf '%s\n' '[Unit]' 'Description=Codex Classroom Monitor Agent' 'After=network-online.target' 'Wants=network-online.target' '' '[Service]' 'Type=simple' 'ExecStart=/usr/local/bin/codex-guard run --config /etc/codex-guard/config.json' 'Restart=always' 'RestartSec=5' 'UMask=0077' 'NoNewPrivileges=true' 'PrivateTmp=true' 'PrivateDevices=true' 'ProtectSystem=strict' 'ProtectControlGroups=true' 'ProtectKernelModules=true' 'ProtectKernelTunables=true' 'RestrictSUIDSGID=true' 'LockPersonality=true' 'MemoryDenyWriteExecute=true' 'CapabilityBoundingSet=CAP_DAC_READ_SEARCH' 'ReadWritePaths=/var/lib/codex-guard /etc/codex-guard' "ReadOnlyPaths=$CODEX_HOME_ARG" '' '[Install]' 'WantedBy=multi-user.target' > /etc/systemd/system/codex-guard.service
+  printf '%s\n' '[Unit]' 'Description=Codex Classroom Monitor watchdog' 'After=network-online.target' '' '[Service]' 'Type=oneshot' 'ExecStart=/usr/local/bin/codex-guard watchdog --config /etc/codex-guard/config.json' 'UMask=0077' 'NoNewPrivileges=true' > /etc/systemd/system/codex-guard-watchdog.service
+  printf '%s\n' '[Unit]' 'Description=Run Codex Classroom Monitor watchdog' '' '[Timer]' 'OnBootSec=2min' 'OnUnitActiveSec=2min' 'Persistent=true' '' '[Install]' 'WantedBy=timers.target' > /etc/systemd/system/codex-guard-watchdog.timer
   systemctl daemon-reload
   systemctl enable --now codex-guard.service
+  systemctl enable --now codex-guard-watchdog.timer
 else
   plist=/Library/LaunchDaemons/com.openai.codex-guard.plist
   install -m 0644 /dev/null "$plist"
-  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' '<plist version="1.0"><dict>' '<key>Label</key><string>com.openai.codex-guard</string>' '<key>ProgramArguments</key><array><string>/usr/local/bin/codex-guard</string><string>run</string><string>--config</string><string>/etc/codex-guard/config.json</string></array>' '<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>' '<key>StandardOutPath</key><string>/var/log/codex-guard.log</string>' '<key>StandardErrorPath</key><string>/var/log/codex-guard.err.log</string>' '</dict></plist>' > "$plist"
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' '<plist version="1.0"><dict>' '<key>Label</key><string>com.openai.codex-guard</string>' '<key>ProgramArguments</key><array><string>/usr/local/bin/codex-guard</string><string>run</string><string>--config</string><string>/etc/codex-guard/config.json</string></array>' '<key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>5</integer><key>Umask</key><integer>63</integer>' '<key>StandardOutPath</key><string>/var/log/codex-guard.log</string>' '<key>StandardErrorPath</key><string>/var/log/codex-guard.err.log</string>' '</dict></plist>' > "$plist"
   launchctl bootout system/com.openai.codex-guard 2>/dev/null || true
   launchctl bootstrap system "$plist"
+  watchdog_plist=/Library/LaunchDaemons/com.openai.codex-guard-watchdog.plist
+  install -m 0644 /dev/null "$watchdog_plist"
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' '<plist version="1.0"><dict>' '<key>Label</key><string>com.openai.codex-guard-watchdog</string>' '<key>ProgramArguments</key><array><string>/usr/local/bin/codex-guard</string><string>watchdog</string><string>--config</string><string>/etc/codex-guard/config.json</string></array>' '<key>RunAtLoad</key><true/><key>StartInterval</key><integer>120</integer><key>Umask</key><integer>63</integer>' '<key>StandardOutPath</key><string>/var/log/codex-guard-watchdog.log</string>' '<key>StandardErrorPath</key><string>/var/log/codex-guard-watchdog.err.log</string>' '</dict></plist>' > "$watchdog_plist"
+  launchctl bootout system/com.openai.codex-guard-watchdog 2>/dev/null || true
+  launchctl bootstrap system "$watchdog_plist"
 fi
+
+sleep 2
+heartbeat_status=connected
+if ! curl -fsS --proto '=https' --tlsv1.2 "$SERVER/healthz" >/dev/null; then heartbeat_status="queued for retry"; fi
 
 echo ""
 echo "Cài đặt Codex Classroom Monitor thành công."
