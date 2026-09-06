@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from app.config import normalize_database_url
+from app.config import COCKROACH_CA_PATH, database_connect_args, normalize_database_url
 from app.db import Base
 from app.migration import migrate_database
 from app.models import Device, Heartbeat, IntegritySnapshot, ProcessedEvent, Student, utcnow
@@ -20,6 +20,8 @@ def test_cockroach_cloud_url_uses_official_sqlalchemy_dialect():
     normalized = normalize_database_url(url)
     assert normalized.startswith("cockroachdb+psycopg://")
     assert "secret" in normalized
+    assert database_connect_args(normalized) == {"sslrootcert": str(COCKROACH_CA_PATH)}
+    assert COCKROACH_CA_PATH.read_text().count("BEGIN CERTIFICATE") == 2
 
 
 def test_heartbeat_updates_presence_but_samples_history(client, db):

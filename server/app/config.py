@@ -7,6 +7,9 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 
+COCKROACH_CA_PATH = Path(__file__).resolve().parent / "certs" / "cockroach-ca.crt"
+
+
 def normalize_database_url(value: str) -> str:
     """Return a SQLAlchemy URL, selecting CockroachDB's official dialect."""
     scheme = urlsplit(value).scheme
@@ -30,6 +33,14 @@ def database_url() -> str:
             raise RuntimeError("DATABASE_URL is required on Vercel; connect a persistent SQL database first")
         return "sqlite:///./codex-monitor.db"
     return normalize_database_url(value)
+
+
+def database_connect_args(value: str) -> dict[str, object]:
+    if value.startswith("sqlite"):
+        return {"check_same_thread": False}
+    if value.startswith("cockroachdb"):
+        return {"sslrootcert": str(COCKROACH_CA_PATH)}
+    return {}
 
 
 def public_base_url() -> str:
