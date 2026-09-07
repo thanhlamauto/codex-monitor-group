@@ -14,6 +14,7 @@
 </section>
 <section class="card help-card">
   <div class="help-heading"><div><p class="eyebrow">Bảo trì</p><h2>Cập nhật agent</h2></div><p>Chạy lại bộ cài đúng hệ điều hành. Thiết bị hiện tại được giữ nguyên, binary và cấu hình bảo vệ được cập nhật tại chỗ.</p></div>
+  <p class="warning-note"><strong>Đã chuyển database:</strong> máy cài trước ngày 07/09/2026 hãy chạy lệnh cập nhật một lần. Agent 1.5.0 sẽ tự đăng ký lại khi nhận đúng lỗi “unknown device”; không cần xoá file cấu hình hay nhập lại tên.</p>
   <div class="help-grid">
     <article><h3>Linux / macOS</h3><div class="install-command"><code id="unix-update-command">{{ unix_update_command }}</code><button type="button" onclick="navigator.clipboard.writeText(document.getElementById('unix-update-command').innerText);this.textContent='Đã sao chép'">Sao chép</button></div></article>
     <article><h3>Windows PowerShell (Admin)</h3><div class="install-command"><code id="windows-update-command">{{ windows_update_command }}</code><button type="button" onclick="navigator.clipboard.writeText(document.getElementById('windows-update-command').innerText);this.textContent='Đã sao chép'">Sao chép</button></div></article>
