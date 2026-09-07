@@ -168,7 +168,11 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     rows = []
     for student in db.scalars(select(Student).order_by(Student.name)).all():
         device = db.scalar(select(Device).where(Device.student_id == student.id).order_by(Device.enrolled_at.desc()))
-        open_alerts = db.scalar(select(func.count(SecurityEvent.id)).where(SecurityEvent.student_id == student.id, SecurityEvent.acknowledged_at.is_(None), SecurityEvent.event_type != "AGENT_UNREACHABLE")) or 0
+        open_alerts = db.scalar(select(func.count(SecurityEvent.id)).where(
+            SecurityEvent.student_id == student.id,
+            SecurityEvent.acknowledged_at.is_(None),
+            SecurityEvent.event_type.notin_(("AGENT_UNREACHABLE", "USAGE_SOURCE_MISMATCH")),
+        )) or 0
         state = device_state(device) if device else "MISSING"
         latest_integrity = db.scalar(select(IntegritySnapshot).where(IntegritySnapshot.device_id == device.id).order_by(IntegritySnapshot.created_at.desc())) if device else None
         quota = db.get(QuotaSnapshot, device.id) if device else None

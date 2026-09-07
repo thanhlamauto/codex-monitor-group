@@ -149,7 +149,7 @@ Source B runs exactly:
 ccusage codex daily --json --no-cost --offline --timezone <CLASSROOM_TIMEZONE> --since ... --until ...
 ```
 
-with ccusage pinned to `20.0.20` and `CODEX_HOME` explicitly set. It normalizes `inputTokens`, `cacheReadTokens`, `outputTokens`, `reasoningOutputTokens`, and `totalTokens`. The server stores UTC receipt times and assigns day boundaries in the classroom timezone. A configurable difference above both `USAGE_MISMATCH_PERCENT` and `USAGE_MISMATCH_MIN_TOKENS` creates `USAGE_SOURCE_MISMATCH`; it is an anomaly, not an accusation.
+with ccusage pinned to `20.0.20` and `CODEX_HOME` explicitly set. It normalizes `inputTokens`, `cacheReadTokens`, `outputTokens`, `reasoningOutputTokens`, and `totalTokens`. The server stores UTC receipt times and assigns day boundaries in the classroom timezone. A configurable difference above both `USAGE_MISMATCH_PERCENT` and `USAGE_MISMATCH_MIN_TOKENS` creates `USAGE_SOURCE_MISMATCH`; it is an anomaly, not an accusation. Comparison starts only after OTel has reported for at least 24 hours, excludes the partial enrollment day, and evaluates completed calendar days. Usage-source warnings remain in the audit timeline but do not mark device integrity as `TAMPER`.
 
 To bound database traffic, presence heartbeats still arrive every minute but only one history row is retained per ten-minute window. Integrity scans run every five minutes. Every signed route shares one short-lived `processed_events` receipt table instead of probing four event tables. The daily Vercel cron removes heartbeat and integrity rows older than 30 days and receipts older than 35 days; token usage and security events are retained.
 
