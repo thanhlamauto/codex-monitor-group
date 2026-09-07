@@ -96,7 +96,7 @@ irm https://codex-classroom-monitor.vercel.app/install.ps1 | iex
 
 PowerShell options are `-Name "Display name"`, `-Server https://your-domain`, `-CodexHome C:\absolute\path\.codex`, and `-Upgrade` when running a downloaded installer script directly.
 
-For a nonstandard Codex home, use `curl -fsSL URL/install.sh | sudo sh -s -- --codex-home /absolute/path/to/.codex`. Noninteractive installation can pass `--name "Display name"`; a custom deployment can pass `--server https://your-domain`. Re-running the command is idempotent when the local registration config already exists. For an update, re-run it with `--upgrade`; only artifacts present in the server's checksummed release are accepted. There is no silent arbitrary auto-update.
+For a nonstandard Codex home, use `curl -fsSL URL/install.sh | sudo sh -s -- --codex-home /absolute/path/to/.codex`. Noninteractive installation can pass `--name "Display name"`; a custom deployment can pass `--server https://your-domain`. Re-running the command is idempotent when the local registration config already exists. For an update, re-run it with `--upgrade`; only artifacts present in the server's checksummed release are accepted. There is no silent arbitrary auto-update. Agent 1.5.0 also recovers from an explicitly reset server database: only an exact signed-API response of `401 unknown device` triggers re-registration with the existing local Ed25519 public key, a new server device ID and OTel token, a cleared stale queue, and rewritten telemetry configuration. Other authentication failures never trigger re-registration.
 
 ## Verify installation
 

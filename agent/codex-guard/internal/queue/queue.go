@@ -91,4 +91,9 @@ func (q *Queue) Pop() error {
 	}
 	return q.save(items[1:])
 }
+func (q *Queue) Clear() error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.save(nil)
+}
 func (q *Queue) Len() int { q.mu.Lock(); defer q.mu.Unlock(); items, _ := q.load(); return len(items) }

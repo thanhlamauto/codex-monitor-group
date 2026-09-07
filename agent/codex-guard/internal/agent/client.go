@@ -23,7 +23,7 @@ import (
 	queuepkg "github.com/thanhlamauto/codex-monitor-group/agent/codex-guard/internal/queue"
 )
 
-const Version = "1.4.0"
+const Version = "1.5.0"
 
 type Client struct {
 	ConfigPath string
@@ -94,7 +94,20 @@ func Enroll(server, name, label, codexHome, codexPath, ccusagePath, agentPath, s
 	if err != nil {
 		return nil, err
 	}
-	body, _ := json.Marshal(map[string]string{"name": strings.TrimSpace(name), "public_key": base64.StdEncoding.EncodeToString(public), "device_label": strings.TrimSpace(label)})
+	enrolled, err := register(server, name, label, base64.StdEncoding.EncodeToString(public))
+	if err != nil {
+		return nil, err
+	}
+	c := &config.Config{ServerURL: strings.TrimRight(server, "/"), DeviceID: enrolled.DeviceID, StudentName: enrolled.StudentName, DeviceLabel: enrolled.DeviceLabel, PrivateKey: base64.StdEncoding.EncodeToString(private), PublicKey: base64.StdEncoding.EncodeToString(public), OTLPToken: enrolled.OTLPToken, CodexHome: codexHome, CodexPath: codexPath, CCUsagePath: ccusagePath, AgentPath: agentPath, StateDir: stateDir, Timezone: enrolled.ClassroomTimezone, HeartbeatSeconds: enrolled.HeartbeatSeconds, UsageSeconds: enrolled.UsageSeconds, IntegritySeconds: enrolled.IntegritySeconds}
+	c.Defaults()
+	if err := config.Save(configPath, c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func register(server, name, label, publicKey string) (*EnrollResponse, error) {
+	body, _ := json.Marshal(map[string]string{"name": strings.TrimSpace(name), "public_key": publicKey, "device_label": strings.TrimSpace(label)})
 	response, err := (&http.Client{Timeout: 20 * time.Second}).Post(strings.TrimRight(server, "/")+"/api/v1/register", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("connect to server: %w", err)
@@ -108,12 +121,46 @@ func Enroll(server, name, label, codexHome, codexPath, ccusagePath, agentPath, s
 	if err := json.Unmarshal(data, &enrolled); err != nil {
 		return nil, err
 	}
-	c := &config.Config{ServerURL: strings.TrimRight(server, "/"), DeviceID: enrolled.DeviceID, StudentName: enrolled.StudentName, DeviceLabel: enrolled.DeviceLabel, PrivateKey: base64.StdEncoding.EncodeToString(private), PublicKey: base64.StdEncoding.EncodeToString(public), OTLPToken: enrolled.OTLPToken, CodexHome: codexHome, CodexPath: codexPath, CCUsagePath: ccusagePath, AgentPath: agentPath, StateDir: stateDir, Timezone: enrolled.ClassroomTimezone, HeartbeatSeconds: enrolled.HeartbeatSeconds, UsageSeconds: enrolled.UsageSeconds, IntegritySeconds: enrolled.IntegritySeconds}
-	c.Defaults()
-	if err := config.Save(configPath, c); err != nil {
-		return nil, err
+	return &enrolled, nil
+}
+
+// reEnrollIfCurrent recovers only when the server has lost this device record,
+// such as after an explicitly approved database reset. It deliberately does not
+// recover from invalid signatures or replay errors, which remain security alerts.
+func (a *Client) reEnrollIfCurrent(staleDeviceID string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.Config.DeviceID != staleDeviceID {
+		return nil
 	}
-	return c, nil
+	enrolled, err := register(a.Config.ServerURL, a.Config.StudentName, a.Config.DeviceLabel, a.Config.PublicKey)
+	if err != nil {
+		return fmt.Errorf("automatic re-enrollment failed: %w", err)
+	}
+	updated := *a.Config
+	updated.DeviceID = enrolled.DeviceID
+	updated.StudentName = enrolled.StudentName
+	updated.DeviceLabel = enrolled.DeviceLabel
+	updated.OTLPToken = enrolled.OTLPToken
+	updated.Timezone = enrolled.ClassroomTimezone
+	updated.HeartbeatSeconds = enrolled.HeartbeatSeconds
+	updated.UsageSeconds = enrolled.UsageSeconds
+	updated.IntegritySeconds = enrolled.IntegritySeconds
+	updated.NextSequence = 1
+	updated.Defaults()
+	fingerprint, err := ConfigureTelemetry(updated.CodexHome, updated.ServerURL, updated.OTLPToken)
+	if err != nil {
+		return fmt.Errorf("configure telemetry after re-enrollment: %w", err)
+	}
+	updated.ExpectedConfigHash = fingerprint
+	if err := a.Queue.Clear(); err != nil {
+		return fmt.Errorf("clear stale event queue after re-enrollment: %w", err)
+	}
+	if err := config.Save(a.ConfigPath, &updated); err != nil {
+		return fmt.Errorf("save re-enrolled device: %w", err)
+	}
+	a.Config = &updated
+	return nil
 }
 
 func (a *Client) enqueue(endpoint string, payload any) error {
@@ -171,6 +218,15 @@ func (a *Client) Flush() error {
 		data, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 		response.Body.Close()
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			if response.StatusCode == http.StatusUnauthorized && strings.Contains(strings.ToLower(string(data)), "unknown device") {
+				var stale struct {
+					DeviceID string `json:"device_id"`
+				}
+				if err := json.Unmarshal(item.Envelope, &stale); err != nil {
+					return fmt.Errorf("decode stale event: %w", err)
+				}
+				return a.reEnrollIfCurrent(stale.DeviceID)
+			}
 			return fmt.Errorf("server returned %s: %s", response.Status, strings.TrimSpace(string(data)))
 		}
 		if err := a.Queue.Pop(); err != nil {
