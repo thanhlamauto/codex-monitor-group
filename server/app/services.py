@@ -100,17 +100,20 @@ def purge_expired_telemetry(db: Session, now: datetime | None = None) -> dict[st
 def usage_totals(db: Session, student_id: str, start: date, end: date, source: str = "local") -> dict:
     row = db.execute(
         select(
-            func.coalesce(func.sum(UsageReport.input_tokens), 0),
-            func.coalesce(func.sum(UsageReport.cached_input_tokens), 0),
-            func.coalesce(func.sum(UsageReport.output_tokens), 0),
-            func.coalesce(func.sum(UsageReport.reasoning_output_tokens), 0),
-            func.coalesce(func.sum(UsageReport.total_tokens), 0),
+            func.sum(UsageReport.input_tokens),
+            func.sum(UsageReport.cached_input_tokens),
+            func.sum(UsageReport.output_tokens),
+            func.sum(UsageReport.reasoning_output_tokens),
+            func.sum(UsageReport.total_tokens),
         ).where(
             UsageReport.student_id == student_id, UsageReport.source == source,
             UsageReport.period_date >= start, UsageReport.period_date <= end,
         )
     ).one()
-    return dict(zip(("input", "cached", "output", "reasoning", "total"), map(int, row)))
+    # CockroachDB returns DECIMAL for SUM(INT8), while a bare SQL COALESCE(...,
+    # 0) binds the fallback as INT4. Normalize nullable aggregates in Python so
+    # the same query works on CockroachDB, PostgreSQL, and SQLite.
+    return dict(zip(("input", "cached", "output", "reasoning", "total"), (int(value or 0) for value in row)))
 
 
 def classroom_today() -> date:
@@ -120,9 +123,10 @@ def classroom_today() -> date:
 def maybe_usage_mismatch(db: Session, device: Device, period: date):
     values = {}
     for source in ("local", "otel"):
-        values[source] = int(db.scalar(select(func.coalesce(func.sum(UsageReport.total_tokens), 0)).where(
+        total = db.scalar(select(func.sum(UsageReport.total_tokens)).where(
             UsageReport.device_id == device.id, UsageReport.source == source, UsageReport.period_date == period
-        )) or 0)
+        ))
+        values[source] = int(total or 0)
     if not values["local"] or not values["otel"]:
         return
     delta = abs(values["local"] - values["otel"])
