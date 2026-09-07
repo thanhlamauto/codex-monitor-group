@@ -1,14 +1,17 @@
 import hashlib
 import json
+from datetime import datetime, timedelta, timezone
 
-from app.models import Device, SecurityEvent, UsageReport
-from app.services import classroom_today
+from app.config import settings
+from app.models import Device, IntegritySnapshot, SecurityEvent, UsageReport
+from app.services import classroom_today, maybe_usage_mismatch
 
 from .helpers import enroll, signed
 
 
-def usage_payload(total=2000):
-    return {"source": "local", "days": [{"date": classroom_today().isoformat(), "input_tokens": total - 200, "cached_input_tokens": 100, "output_tokens": 200, "reasoning_output_tokens": 50, "total_tokens": total}]}
+def usage_payload(total=2000, period=None):
+    period = period or classroom_today()
+    return {"source": "local", "days": [{"date": period.isoformat(), "input_tokens": total - 200, "cached_input_tokens": 100, "output_tokens": 200, "reasoning_output_tokens": 50, "total_tokens": total}]}
 
 
 def test_normal_usage_import_duplicate_and_absolute_update(client, db):
@@ -36,16 +39,73 @@ def test_empty_local_report_does_not_claim_logs_were_reconciled(client, db):
     assert "MISSING" in page.text
 
 
-def test_signed_local_collector_snapshot_reconciles_with_ccusage(client, db):
+def test_usage_mismatch_waits_for_a_complete_otel_day(client, db):
     _, key, result = enroll(client, db)
-    assert client.post("/api/v1/usage", json=signed(key, result["device_id"], 1, usage_payload(5000))).status_code == 200
-    otel = usage_payload(600)
+    now = datetime.now(timezone.utc)
+    device = db.get(Device, result["device_id"])
+    device.enrolled_at = now - timedelta(hours=23)
+    db.commit()
+    yesterday = classroom_today() - timedelta(days=1)
+    assert client.post("/api/v1/usage", json=signed(key, result["device_id"], 1, usage_payload(5000, yesterday))).status_code == 200
+    otel = usage_payload(600, yesterday)
     otel["source"] = "otel"
     response = client.post("/api/v1/usage", json=signed(key, result["device_id"], 2, otel))
     assert response.status_code == 200
     report = db.query(UsageReport).filter_by(source="otel").one()
     assert report.total_tokens == 600
+    assert db.query(SecurityEvent).filter_by(event_type="USAGE_SOURCE_MISMATCH").count() == 0
+
+
+def test_usage_mismatch_compares_completed_days_after_otel_warmup(client, db):
+    _, _, result = enroll(client, db)
+    now = datetime.now(timezone.utc)
+    device = db.get(Device, result["device_id"])
+    device.enrolled_at = now - timedelta(days=3)
+    device.last_otlp_at = now
+    yesterday = classroom_today() - timedelta(days=1)
+    db.add_all([
+        UsageReport(device_id=device.id, student_id=device.student_id, event_id="local", source="local", period_date=yesterday, input_tokens=4800, cached_input_tokens=100, output_tokens=200, reasoning_output_tokens=50, total_tokens=5000, occurred_at=now),
+        UsageReport(device_id=device.id, student_id=device.student_id, event_id="otel", source="otel", period_date=yesterday, input_tokens=400, cached_input_tokens=100, output_tokens=200, reasoning_output_tokens=50, total_tokens=600, occurred_at=now),
+    ])
+    db.commit()
+    maybe_usage_mismatch(db, device, yesterday, now=now)
+    db.commit()
     assert db.query(SecurityEvent).filter_by(event_type="USAGE_SOURCE_MISMATCH").count() == 1
+
+
+def test_usage_mismatch_skips_partial_enrollment_day_and_current_day(client, db):
+    _, _, result = enroll(client, db)
+    now = datetime.now(timezone.utc)
+    device = db.get(Device, result["device_id"])
+    device.enrolled_at = now - timedelta(days=2)
+    device.last_otlp_at = now
+    enrollment_day = device.enrolled_at.astimezone(settings.timezone()).date()
+    today = classroom_today()
+    for index, period in enumerate((enrollment_day, today)):
+        db.add_all([
+            UsageReport(device_id=device.id, student_id=device.student_id, event_id=f"local-{index}", source="local", period_date=period, input_tokens=4800, cached_input_tokens=100, output_tokens=200, reasoning_output_tokens=50, total_tokens=5000, occurred_at=now),
+            UsageReport(device_id=device.id, student_id=device.student_id, event_id=f"otel-{index}", source="otel", period_date=period, input_tokens=400, cached_input_tokens=100, output_tokens=200, reasoning_output_tokens=50, total_tokens=600, occurred_at=now),
+        ])
+    db.commit()
+    maybe_usage_mismatch(db, device, enrollment_day, now=now)
+    maybe_usage_mismatch(db, device, today, now=now)
+    db.commit()
+    assert db.query(SecurityEvent).filter_by(event_type="USAGE_SOURCE_MISMATCH").count() == 0
+
+
+def test_usage_mismatch_does_not_mark_integrity_as_tamper(client, db):
+    student, _, result = enroll(client, db)
+    now = datetime.now(timezone.utc)
+    device = db.get(Device, result["device_id"])
+    device.last_seen = now
+    device.last_otlp_at = now
+    db.add(IntegritySnapshot(device_id=device.id, event_id="integrity-ok", files_checked=1, status="OK"))
+    db.add(SecurityEvent(student_id=student.id, device_id=device.id, event_type="USAGE_SOURCE_MISMATCH", event_key="mismatch:test", severity="WARNING", details_json={}))
+    db.commit()
+    page = client.get("/")
+    assert page.status_code == 200
+    assert "TAMPER" not in page.text
+    assert '<span class="pill ok">OK</span>' in page.text
 
 
 def test_integrity_accepts_allowlisted_metadata_and_rejects_paths(client, db):

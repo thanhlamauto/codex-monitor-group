@@ -120,7 +120,32 @@ def classroom_today() -> date:
     return datetime.now(timezone.utc).astimezone(settings.timezone()).date()
 
 
-def maybe_usage_mismatch(db: Session, device: Device, period: date):
+def maybe_usage_mismatch(db: Session, device: Device, period: date, now: datetime | None = None):
+    """Compare sources only once OTel has covered at least one complete day.
+
+    Enrollment and OTel configuration happen together in the installers. The
+    enrollment day is therefore a partial OTel day while the local collector can
+    immediately backfill the whole day (and older JSONL history). Comparing
+    those values would create a permanent false-positive alert. Waiting for a
+    completed calendar day also avoids comparing two in-flight daily snapshots.
+    """
+    now = now or datetime.now(timezone.utc)
+    enrolled_at = device.enrolled_at
+    last_otlp_at = device.last_otlp_at
+    if not enrolled_at or not last_otlp_at:
+        return
+    if enrolled_at.tzinfo is None:
+        enrolled_at = enrolled_at.replace(tzinfo=timezone.utc)
+    if last_otlp_at.tzinfo is None:
+        last_otlp_at = last_otlp_at.replace(tzinfo=timezone.utc)
+    if last_otlp_at - enrolled_at < timedelta(days=1):
+        return
+    classroom_timezone = settings.timezone()
+    enrollment_day = enrolled_at.astimezone(classroom_timezone).date()
+    today = now.astimezone(classroom_timezone).date()
+    if period <= enrollment_day or period >= today:
+        return
+
     values = {}
     for source in ("local", "otel"):
         total = db.scalar(select(func.sum(UsageReport.total_tokens)).where(
